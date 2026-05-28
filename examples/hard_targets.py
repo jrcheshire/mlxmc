@@ -13,6 +13,8 @@ fail, so the easy-Gaussian story breaks down.
 For each target we compare the tuning-free ensemble against warmup-adapted dense-M HMC,
 and report BOTH mixing (ESS, only trustworthy at tau>1) AND accuracy (recovered moments
 vs known truth) -- a sampler can mix fast yet be biased (e.g. never reach the funnel neck).
+
+Run:  python examples/hard_targets.py [lscan|dscan]
 """
 import sys
 import time
@@ -20,48 +22,11 @@ import time
 import mlx.core as mx
 import numpy as np
 
-import ess
-from ensemble_sampler import make_sampler
-from warmup import warmup, run_chain, make_warmup_step
-
-# ----------------------------------------------------------------------------- targets
-B_BANANA = 0.05   # curvature; Var[x2] = 1 + 2 B^2 * 100^2
-
-
-def banana_logp(x):
-    """phi(x) = (x1, x2 + B x1^2 - 100 B, x3, ...) ~ N(0, diag(100, 1, 1, ...))."""
-    x1, x2 = x[0], x[1]
-    twisted = x2 + B_BANANA * x1 * x1 - 100.0 * B_BANANA
-    rest = 0.5 * (x[2:] * x[2:]).sum() if x.shape[0] > 2 else 0.0
-    return -(x1 * x1) / 200.0 - 0.5 * twisted * twisted - rest
-
-
-def funnel_logp(z):
-    """v = z[0] ~ N(0, 9); x = z[1:] | v ~ N(0, exp(v)). The -0.5*(D-1)*v term is the
-    v-dependent normalization -- it's what makes this a funnel, not a free-floating v."""
-    v, x = z[0], z[1:]
-    n_x = z.shape[0] - 1
-    return -(v * v) / 18.0 - 0.5 * n_x * v - 0.5 * mx.exp(-v) * (x * x).sum()
-
-
-def funnel_nc_logp(z):
-    """Non-centered funnel: sample (v, x̃) with x̃ ~ N(0,1), and x = x̃·exp(v/2). In these
-    coordinates the v-dependent scale vanishes from the density, leaving a *product of
-    independent Gaussians* (v ~ N(0,9), x̃ ~ N(0,1)) -- no funnel geometry, so HMC's global
-    metric is now correct everywhere. v's marginal is unchanged (N(0,9)), so the same
-    truth/diagnostics apply, and this should flip the centered-funnel result."""
-    v, xt = z[0], z[1:]
-    return -(v * v) / 18.0 - 0.5 * (xt * xt).sum()
-
-
-# Known truths: (dim index, true mean, true std). Cleanest diagnostics only.
-BANANA_TRUTH = {
-    "x1": (0, 0.0, 10.0),                                  # N(0, 100)
-    "x2": (1, 0.0, np.sqrt(1.0 + 2.0 * B_BANANA**2 * 100.0**2)),
-}
-FUNNEL_TRUTH = {
-    "v": (0, 0.0, 3.0),                                    # N(0, 9): the honest mixing test
-}
+from mlxmc.diagnostics import integrated_time, report
+from mlxmc.ensemble import make_sampler
+from mlxmc.targets import (B_BANANA, BANANA_TRUTH, FUNNEL_TRUTH, banana_logp,
+                           funnel_logp, funnel_nc_logp)
+from mlxmc.warmup import make_warmup_step, warmup
 
 
 # ------------------------------------------------------------------------ runners + report
@@ -157,7 +122,7 @@ def evaluate(name, logp, q0_hmc, e0_ens, n_leap, truth, key,
     q_last, eps_bar, Minv = warmup(logp, q0_hmc, n_warmup, n_leap, k_warm)
     hc, h_dt = sample_hmc(logp, q_last, eps_bar, Minv, k_hmc, n_leap, n_sample)
     mx.eval(hc)
-    h_ess, _ = ess.report(hc, f"{name}: adapted dense-M HMC (eps={eps_bar:.3f}, L={n_leap})", h_dt)
+    h_ess, _ = report(hc, f"{name}: adapted dense-M HMC (eps={eps_bar:.3f}, L={n_leap})", h_dt)
     accuracy(hc, "HMC", truth)
     stuck, total = n_stuck(hc)
     print(f"     stuck chains (never moved): {stuck:,}/{total:,}")
@@ -165,7 +130,7 @@ def evaluate(name, logp, q0_hmc, e0_ens, n_leap, truth, key,
 
     ec, e_dt = sample_ensemble(logp, e0_ens, k_ens, ens_collect, ens_burn)
     mx.eval(ec)
-    e_ess, _ = ess.report(ec, f"{name}: affine-invariant ensemble (tuning-free)", e_dt)
+    e_ess, _ = report(ec, f"{name}: affine-invariant ensemble (tuning-free)", e_dt)
     accuracy(ec, "ensemble", truth)
 
     print(f"\n  ESS/sec (sampling phase only)  ->  HMC {h_ess / h_dt:,.0f}   "
@@ -185,7 +150,7 @@ def funnel_L_scan(key, logp=funnel_logp, label="centered", Ls=(6, 8, 12, 16, 24,
         hc, _ = sample_hmc(logp, q_last, eps_bar, Minv, kh, L, 1500, jitter=None)  # expose resonance
         mx.eval(hc)
         f = np.array(hc).reshape(-1, 2)
-        tau_v = ess.integrated_time(np.array(hc)[:, :, 0])     # v dimension only
+        tau_v = integrated_time(np.array(hc)[:, :, 0])     # v dimension only
         stuck, _ = n_stuck(hc)
         print(f"  L={L:3d} eps={eps_bar:.3f} traj_len={eps_bar * L:5.2f}: "
               f"v std {f[:, 0].std():.2f}  tau_v {tau_v:6.1f}  "
@@ -197,7 +162,7 @@ def mixing(chain_mx, dt):
     would otherwise inflate ESS/sec without bound."""
     c = np.array(chain_mx)
     T, N, D = c.shape
-    tau = max(ess.integrated_time(c[:, :, d]) for d in range(D))
+    tau = max(integrated_time(c[:, :, d]) for d in range(D))
     return tau, (T * N / max(tau, 1.0)) / dt
 
 

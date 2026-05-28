@@ -10,9 +10,11 @@ import matplotlib.pyplot as plt
 import mlx.core as mx
 import numpy as np
 
-from hard_targets import (banana_logp, funnel_logp, funnel_nc_logp,
-                          sample_hmc, sample_ensemble, mixing)
-from warmup import warmup
+from mlxmc.targets import banana_logp, funnel_logp, funnel_nc_logp
+from mlxmc.warmup import warmup
+
+# Benchmark helpers (sampling-phase-timed runners) live in the sibling example.
+from hard_targets import mixing, sample_ensemble, sample_hmc
 
 N_LEAP = 12
 

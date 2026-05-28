@@ -10,10 +10,7 @@ MLX transforms on display:
   - mx.random   : JAX-style functional keys (split per step), so the
                   compiled step is pure
 """
-import time
-
 import mlx.core as mx
-import numpy as np
 
 
 def make_sampler(logp_single, n_dim, a=2.0):
@@ -40,7 +37,8 @@ def make_sampler(logp_single, n_dim, a=2.0):
     return update_half
 
 
-def run(logp_single, ensemble, n_steps, burn, key, a=2.0):
+def run_ensemble(logp_single, ensemble, n_steps, burn, key, a=2.0):
+    """Sample with the affine-invariant ensemble. Returns (flat samples, accept_frac)."""
     n_walkers, n_dim = ensemble.shape
     half = n_walkers // 2
     update_half = make_sampler(logp_single, n_dim, a)
@@ -60,34 +58,3 @@ def run(logp_single, ensemble, n_steps, burn, key, a=2.0):
     samples = mx.stack(chain, axis=0).reshape(-1, n_dim)
     accept_frac = float(accepted) / (n_steps * n_walkers)
     return samples, accept_frac
-
-
-if __name__ == "__main__":
-    # A deliberately nasty target: strong correlation, ~25:1 variance ratio.
-    mu_true = np.array([1.0, -2.0])
-    Sigma_true = np.array([[25.0, 4.5], [4.5, 1.0]])   # corr = 0.9
-    Sig_inv = mx.array(np.linalg.inv(Sigma_true))
-    mu = mx.array(mu_true)
-
-    def logp_single(x):                      # x: (D,) -> scalar
-        d = x - mu
-        return -0.5 * (d @ Sig_inv @ d)
-
-    n_walkers, n_steps, burn = 2000, 3000, 1000
-    key = mx.random.key(0)
-    key, k_init = mx.random.split(key)
-    ensemble = mx.random.normal(shape=(n_walkers, 2), key=k_init) * 5.0  # broad, generic start
-
-    t0 = time.time()
-    samples, acc = run(logp_single, ensemble, n_steps, burn, key)
-    dt = time.time() - t0
-
-    s = np.array(samples)
-    print(f"walkers {n_walkers}  steps {n_steps}  post-burn samples {s.shape[0]:,}")
-    print(f"acceptance fraction: {acc:.3f}   (healthy stretch-move range ~0.2-0.5)")
-    print(f"wall time: {dt:.2f}s   ->  {s.shape[0] / dt:,.0f} samples/sec")
-    print("\n            mean (true -> recovered)        std (true -> recovered)")
-    for i in range(2):
-        print(f"  dim {i}:   {mu_true[i]:+.3f} -> {s[:, i].mean():+.3f}"
-              f"           {np.sqrt(Sigma_true[i, i]):.3f} -> {s[:, i].std():.3f}")
-    print(f"\n  recovered corr: {np.corrcoef(s.T)[0, 1]:+.3f}   (true +0.900)")

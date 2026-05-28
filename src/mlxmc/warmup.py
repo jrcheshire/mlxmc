@@ -1,5 +1,5 @@
 """Warmup adaptation for HMC: dual-averaging step size + windowed dense mass-matrix
-estimation (Stan-style). This makes the preconditioned_hmc.py result *honest* -- rather
+estimation (Stan-style). This makes the preconditioned-HMC result *honest* -- rather
 than being handed the true Sigma, we estimate M^{-1} = Cov(q) during warmup and adapt
 eps to a target acceptance, then sample. The mass matrix is HMC's affine invariance, and
 this is how you earn it instead of supplying it.
@@ -19,13 +19,9 @@ MLX notes:
     slow window estimates M near stationarity.
 """
 import math
-import sys
-import time
 
 import mlx.core as mx
 import numpy as np
-
-import ess  # shared target (logp_single, Sigma_np, mu) + ESS machinery
 
 
 class DualAveraging:
@@ -180,45 +176,3 @@ def run_chain(logp_single, q0, n_steps, burn, eps, Minv_np, key, n_leap):
         if t >= burn:
             chain.append(q)
     return mx.stack(chain, axis=0)
-
-
-if __name__ == "__main__":
-    # Validation: estimate M during warmup, then check (a) the estimate matches true Sigma
-    # and (b) the adapted sampler recovers the oracle (true-Sigma) ESS/sec. Same eps_bar is
-    # used for both sampling runs so the comparison isolates the mass-matrix estimate.
-    Sigma = ess.Sigma_np
-    # L from argv (default 8). Short L pushes tau > 1, where adapted-vs-oracle ESS/sec is
-    # a reliable discriminator; long L mixes into the antithetic floor (tau < 1) where it
-    # isn't. eps is tuned at the chosen L either way.
-    n_leap = int(sys.argv[1]) if len(sys.argv) > 1 else 8
-    n_chains, n_warmup, n_sample = 1000, 600, 1500
-    # Distinct streams for init / warmup / each sampling run (no RNG reuse across phases).
-    key = mx.random.key(0)
-    k_init, k_warm, k_ad, k_or = mx.random.split(key, 4)
-
-    q0 = mx.random.normal(shape=(n_chains, 2), key=k_init) * 5.0
-
-    q_last, eps_bar, Minv_est = warmup(ess.logp_single, q0, n_warmup, n_leap, k_warm)
-    rel_err = np.linalg.norm(Minv_est - Sigma) / np.linalg.norm(Sigma)
-    print(f"warmup: {n_warmup} steps, {n_chains} chains, L={n_leap}")
-    print(f"  tuned eps (eps_bar): {eps_bar:.3f}   (oracle precond used 0.7 at L=6)")
-    print(f"  estimated M^-1 vs true Sigma  (rel. Frobenius err {rel_err:.3f}):")
-    print(f"    estimated: {Minv_est.ravel().round(3)}")
-    print(f"    true:      {Sigma.ravel().round(3)}")
-
-    # Sampling carries the warmed-up positions forward (q_last is near-stationary), so
-    # burn=0. Both runs start from the same q_last; only the metric differs.
-    t0 = time.time()
-    adapted = run_chain(ess.logp_single, q_last, n_sample, 0, eps_bar, Minv_est, k_ad, n_leap)
-    mx.eval(adapted)
-    a_ess, a_dt = ess.report(adapted, "adapted (estimated M, tuned eps)", time.time() - t0)
-
-    t0 = time.time()
-    oracle = run_chain(ess.logp_single, q_last, n_sample, 0, eps_bar, Sigma, k_or, n_leap)
-    mx.eval(oracle)
-    o_ess, o_dt = ess.report(oracle, "oracle (true Sigma, same eps)", time.time() - t0)
-
-    print("\n=== ESS/sec (adapted vs oracle; close => warmup recovered the metric) ===")
-    print(f"  adapted:  {a_ess / a_dt:>10,.0f}")
-    print(f"  oracle:   {o_ess / o_dt:>10,.0f}   "
-          f"(adapted = {(a_ess / a_dt) / (o_ess / o_dt):.2f}x oracle)")

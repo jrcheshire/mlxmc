@@ -10,7 +10,7 @@ can rarely flip, which would show up as a large deviation.)
 import mlx.core as mx
 import numpy as np
 
-from ensemble_sampler import run
+from mlxmc.ensemble import run_ensemble
 
 rng = np.random.default_rng(0)
 D = 3
@@ -40,8 +40,8 @@ E0 = mx.random.normal(shape=(n_walkers, D), key=k_init)   # matched to base N(0,
 E0_mapped = E0 @ A_T + b                                   # matched to q = N(b, A A^T)
 
 # SAME key for both runs -> identical random stream.
-xs, acc_base = run(logp_base, E0, n_steps, burn, key)
-ys, acc_tr = run(logq, E0_mapped, n_steps, burn, key)
+xs, acc_base = run_ensemble(logp_base, E0, n_steps, burn, key)
+ys, acc_tr = run_ensemble(logq, E0_mapped, n_steps, burn, key)
 
 mapped = xs @ A_T + b
 max_dev = float(mx.max(mx.abs(ys - mapped)))

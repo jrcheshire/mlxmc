@@ -5,41 +5,60 @@ with MCMC samplers — the "BlackJAX-shaped gap" (MLX has no mature PPL). Also J
 first hands-on taste of the MLX transform stack, coming from JAX.
 
 ## Environment
-Pixi project. Deps: `mlx`, `numpy`, `matplotlib`. Run:
-`pixi run --manifest-path ~/mlxmc/pyproject.toml python <file>.py`.
+Pixi project; installs `mlxmc` editable (src layout). Core deps `mlx`, `numpy`;
+`matplotlib` + `pytest` in the env. Run examples / tests:
+- `pixi run --manifest-path ~/mlxmc/pyproject.toml python examples/<name>.py`
+- `pixi run --manifest-path ~/mlxmc/pyproject.toml test` (pytest; `MLXMC_TEST_DEVICE=cpu|gpu` pins the backend)
 
-## Files
-- **`ensemble_sampler.py`** — affine-invariant ensemble sampler (Goodman & Weare 2010;
-  the `emcee` algorithm). Gradient-free; stretch move; `mx.vmap` + `mx.compile`.
+Now a git repo (local `main`, GitHub remote) with BSD-3-Clause LICENSE, README, and a
+GitHub Actions workflow (`.github/workflows/tests.yml`) running the suite on an
+Apple-silicon runner across CPU (required) + GPU (allowed-to-fail) — see [project-mlxmc].
+
+## Layout
+**Package `src/mlxmc/`** (the library — import `from mlxmc import ...`):
+- **`ensemble.py`** — affine-invariant ensemble (Goodman & Weare 2010; the `emcee`
+  algorithm). Gradient-free; stretch move; `mx.vmap` + `mx.compile`. `make_sampler`,
+  `run_ensemble` (returns flat samples + accept_frac).
 - **`hmc.py`** — Hamiltonian Monte Carlo. `mx.grad ∘ mx.vmap` (batched gradient over
-  chains) + `mx.compile`. Identity mass matrix.
-- **`affine_invariance_test.py`** — empirically proves affine invariance (run base +
-  affine-transformed target with same RNG stream → identical acceptance).
-- **`ess.py`** — effective sample size / integrated autocorrelation (emcee-style, FFT +
-  Sokal window); ensemble-vs-HMC ESS/sec comparison. Reusable measurement machinery.
-  `integrated_time` skips zero-variance (stuck) walkers — one would otherwise NaN-poison
-  the walker-averaged autocorrelation.
-- **`preconditioned_hmc.py`** — mass-matrix HMC (M = Σ⁻¹); 3-way ESS/sec comparison.
+  chains) + `mx.compile`. Identity mass matrix. `make_hmc`, `run_hmc`.
+- **`preconditioned.py`** — mass-matrix HMC (M = Σ⁻¹). `make_phmc`, `run_phmc` (now takes
+  `logp_single` like its siblings — the old `ess.logp_single` hardcoding was removed in the
+  reorg). Returns the structured (T,N,D) chain.
 - **`warmup.py`** — Stan-style warmup adaptation: dual-averaging step size + windowed
   *dense* mass-matrix estimation (`M⁻¹ = Cov`). Makes the preconditioning honest (M is
   estimated, not the supplied true Σ). `eps`/`M⁻¹`/`chol(M)ᵀ` passed as **array args** to
   the compiled step so per-iteration changes don't recompile; covariance + Cholesky run
   host-side in numpy fp64 (GPU only runs the fp32 leapfrog); NaN energies (funnel-neck
-  divergences) are rejected, not propagated. `python warmup.py [L]`.
-- **`hard_targets.py`** — banana + centered/non-centered funnel benchmarks, ensemble vs
-  adapted dense-M HMC, reporting mixing (ESS), accuracy (moments vs known truth), and
-  stuck-chain / divergence counts. Timed-sampling helpers exclude warmup/burn + compile
-  for both methods; HMC uses light `eps`-jitter to dodge fixed-L resonance.
-  `python hard_targets.py [lscan|dscan]` — `lscan` exposes the resonance (jitter-free),
-  `dscan` pushes dimension up.
-- **`plot_results.py`** — renders the harder-targets story to `hard_targets_figure.png`
-  (target shapes, funnel-neck contrast, v-marginal bias + non-centered fix, ESS/sec-vs-D).
+  divergences) are rejected, not propagated. `warmup`, `run_chain`, `DualAveraging`.
 - **`nuts.py`** — NUTS (multinomial), vectorized over chains. Tree-doubling recursion in host
   Python; each leapfrog leaf `vmap`+`compile`'d; per-chain U-turn + masking (the MLX
-  no-`while_loop` pattern); reuses `warmup.py` for (eps, M). Validated exact on the Gaussian
+  no-`while_loop` pattern); pairs with `warmup` for (eps, M). Validated exact on the Gaussian
   (cov 24.97 vs 25). **Gotcha:** the top-level sample update must gate on subtree validity
   `s'` (H&G Alg 3) — adopting proposals from internally-U-turned subtrees over-disperses, a
   bias that compounds with tree depth (caught vs known Σ; the mean alone looked fine).
+- **`diagnostics.py`** — effective sample size / integrated autocorrelation (emcee-style, FFT +
+  Sokal window); `report` for ESS/sec. `integrated_time` skips zero-variance (stuck) walkers —
+  one would otherwise NaN-poison the walker-averaged autocorrelation. Pure numpy, no MLX import.
+- **`targets.py`** — example log-densities + known truths: correlated Gaussian (`gaussian_logp`,
+  `GAUSSIAN_MU`/`GAUSSIAN_SIGMA`), banana, centered/non-centered funnel. (Split out of the old
+  `ess.py`, which had mixed diagnostics + target + runners.)
+
+**Examples `examples/`** (runnable demos / benchmark drivers; were the old top-level `__main__`s):
+- **`gaussian_ess.py`** — ensemble vs identity-HMC vs preconditioned-HMC ESS/sec on the Gaussian.
+- **`warmup_validation.py`** — warmup recovers Σ + matches oracle ESS/sec. `[L]` arg.
+- **`hard_targets.py`** — banana + funnel benchmark harness (also defines the sampling-phase-timed
+  `sample_hmc`/`sample_ensemble`, reused by `nuts_funnel` and `plot_hard_targets`). `[lscan|dscan]`.
+- **`nuts_funnel.py`** — NUTS correctness on the Gaussian; `funnel` mode for the masking study.
+- **`affine_invariance.py`** — empirically proves affine invariance (base + affine-transformed
+  target, same RNG stream → identical acceptance).
+- **`plot_hard_targets.py`** — renders `hard_targets_figure.png` (target shapes, funnel-neck
+  contrast, v-marginal bias + non-centered fix, ESS/sec-vs-D).
+
+**Tests `tests/`** (pytest; `conftest.py` pins device from `MLXMC_TEST_DEVICE`, `util.py` has
+stat helpers): moment recovery for every sampler (`test_samplers_gaussian.py`, Standard
+tolerances — mean <4·SE, std <5%, corr <0.03, NUTS cov <5% Frobenius), warmup Σ recovery
+(<3% Frobenius), affine invariance (exact acceptance + <0.1 trajectory drift), and IAT on
+white-noise/AR(1). 10 tests, ~7s GPU / ~16s CPU.
 
 ## Findings (2026-05-24, all on a corr-0.9, 25:1-variance 2-D Gaussian)
 - **Affine-invariant ensemble:** tuning-free, gradient-free, handles ill-conditioning

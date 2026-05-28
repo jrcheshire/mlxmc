@@ -6,22 +6,33 @@ gradient-aware sampler toolkit built directly on the MLX transform stack
 mature probabilistic-programming layer yet.
 
 > **Status: exploratory research code.** The samplers work and are validated
-> (exact moments on Gaussian targets, affine invariance proven empirically), but
-> the interface is still flat modules rather than a stable package API. Expect churn.
+> (a test suite checks moment recovery, Σ-estimation, affine invariance, and the
+> autocorrelation diagnostics on both the CPU and Metal backends), but the API is
+> young and may change. Expect churn.
 
 ## What's here
 
-| Module | Sampler / tool |
+The package lives under `src/mlxmc/`; runnable demos and the benchmark study are in
+`examples/`.
+
+| Module (`mlxmc.`) | Sampler / tool |
 |---|---|
-| `ensemble_sampler.py` | Affine-invariant ensemble (Goodman & Weare 2010 — the `emcee` stretch move). Gradient-free, tuning-free. |
-| `hmc.py` | Hamiltonian Monte Carlo, identity mass. `grad ∘ vmap` batched over chains. |
-| `preconditioned_hmc.py` | Mass-matrix HMC (M = Σ⁻¹). |
-| `warmup.py` | Stan-style warmup: dual-averaging step size + windowed **dense** mass-matrix estimation. |
-| `nuts.py` | NUTS (multinomial; Hoffman & Gelman 2014), vectorized over chains. |
-| `ess.py` | Effective sample size / integrated autocorrelation time (FFT + Sokal window); the cross-sampler **ESS/sec** metric. |
-| `hard_targets.py` | Banana + centered / non-centered funnel benchmarks. |
-| `plot_results.py` | Renders the benchmark figure. |
-| `affine_invariance_test.py` | Empirical proof of affine invariance (same RNG → bit-identical acceptance under an affine map). |
+| `ensemble` | Affine-invariant ensemble (Goodman & Weare 2010 — the `emcee` stretch move). Gradient-free, tuning-free. `make_sampler`, `run_ensemble`. |
+| `hmc` | Hamiltonian Monte Carlo, identity mass. `grad ∘ vmap` batched over chains. `make_hmc`, `run_hmc`. |
+| `preconditioned` | Mass-matrix HMC (M = Σ⁻¹). `make_phmc`, `run_phmc`. |
+| `warmup` | Stan-style warmup: dual-averaging step size + windowed **dense** mass-matrix estimation. `warmup`, `run_chain`. |
+| `nuts` | NUTS (multinomial; Hoffman & Gelman 2014), vectorized over chains. `make_nuts`, `run_nuts`. |
+| `diagnostics` | Effective sample size / integrated autocorrelation time (FFT + Sokal window); the cross-sampler **ESS/sec** metric. |
+| `targets` | Example log-densities: correlated Gaussian, banana, centered / non-centered funnel, with known moments. |
+
+| Example (`examples/`) | What it shows |
+|---|---|
+| `gaussian_ess.py` | Ensemble vs identity-mass HMC vs preconditioned HMC by ESS/sec on the Gaussian. |
+| `warmup_validation.py` | Warmup recovers the true Σ and matches oracle ESS/sec. |
+| `hard_targets.py` | Banana + funnel benchmark (`lscan` / `dscan` modes). |
+| `nuts_funnel.py` | NUTS correctness on the Gaussian; `funnel` mode for the masking-overhead study. |
+| `affine_invariance.py` | Empirical proof of affine invariance (same RNG → bit-identical acceptance under an affine map). |
+| `plot_hard_targets.py` | Renders `hard_targets_figure.png`. |
 
 ## Why MLX
 
@@ -32,7 +43,7 @@ this code:
 - **No traced control-flow primitives** (no `while_loop` / `scan` / `cond`). MLX
   is eager execution plus `compile` of *static* graphs. Fixed-length unrolled
   loops (leapfrog, fixed-`L` HMC) compile fine; data-dependent trajectory length
-  (NUTS) is the hard case — `nuts.py` runs every chain to a fixed `max_tree_depth`
+  (NUTS) is the hard case — `mlxmc.nuts` runs every chain to a fixed `max_tree_depth`
   and **masks** finished chains.
 - **fp32 on the GPU.** Apple Metal has no fp64 in hardware (MLX has fp64 only on
   the CPU backend). This is fine for sampling — Monte Carlo error (~1/√ESS) swamps
@@ -41,29 +52,32 @@ this code:
 
 ## Install
 
-This is a [pixi](https://pixi.sh) project:
+This is a [pixi](https://pixi.sh) project (installs the package editable):
 
 ```bash
 pixi install
-pixi run python hmc.py            # run any module directly
-pixi run python nuts.py funnel    # several have demo modes
+pixi run python examples/gaussian_ess.py        # ensemble vs HMC vs preconditioned
+pixi run python examples/nuts_funnel.py funnel   # several examples have demo modes
 ```
+
+Or install into any environment with pip: `pip install -e .` (needs `mlx`, so arm64 macOS).
 
 ## Usage
 
-Every sampler takes a single-point log-density `logp_single(x) -> scalar` for
-`x` of shape `(D,)`; batching over walkers/chains is handled internally with
-`vmap`. Positions are MLX arrays of shape `(n_chains, D)`.
+Every sampler takes a single-point log-density `logp(x) -> scalar` for `x` of
+shape `(D,)`; batching over walkers/chains is handled internally with `vmap`.
+Positions are MLX arrays of shape `(n_chains, D)`.
 
 ```python
 import mlx.core as mx
 import numpy as np
 
 # Target: a strongly correlated 2-D Gaussian (corr 0.9, 25:1 variance ratio).
+# mlxmc.targets ships this one (as `gaussian_logp`) plus banana / funnel.
 mu = mx.array([1.0, -2.0])
 Sig_inv = mx.array(np.linalg.inv([[25.0, 4.5], [4.5, 1.0]]))
 
-def logp_single(x):                       # x: (D,) -> scalar
+def logp(x):                              # x: (D,) -> scalar
     d = x - mu
     return -0.5 * (d @ Sig_inv @ d)
 
@@ -73,29 +87,27 @@ key = mx.random.key(0)
 **Gradient-free ensemble** — no tuning, handles the ill-conditioning for free:
 
 ```python
-from ensemble_sampler import run
+from mlxmc import run_ensemble
 
 key, k = mx.random.split(key)
 ensemble = mx.random.normal(shape=(2000, 2), key=k) * 5.0     # (n_walkers, D)
-samples, accept_frac = run(logp_single, ensemble, n_steps=3000, burn=1000, key=key)
+samples, accept_frac = run_ensemble(logp, ensemble, n_steps=3000, burn=1000, key=key)
 ```
 
-**HMC, hand-tuned**, and **NUTS after Stan-style warmup** (same `logp_single`):
+**HMC, hand-tuned**, and **NUTS after Stan-style warmup** (same `logp`):
 
 ```python
-from hmc import run_hmc
-from warmup import warmup
-from nuts import run_nuts
+from mlxmc import run_hmc, warmup, run_nuts
 
 key, k = mx.random.split(key)
 q0 = mx.random.normal(shape=(1000, 2), key=k) * 5.0           # (n_chains, D)
 
-samples, acc = run_hmc(logp_single, q0, n_steps=1500, burn=500,
+samples, acc = run_hmc(logp, q0, n_steps=1500, burn=500,
                        eps=0.15, n_leap=40, key=key)
 
 # Warmup adapts (eps, dense M); NUTS then adapts trajectory length itself.
-q_last, eps, Minv = warmup(logp_single, q0, n_warmup=600, n_leap=8, key=key)
-chain, mean_depth, max_depth = run_nuts(logp_single, q_last, n_samples=1500,
+q_last, eps, Minv = warmup(logp, q0, n_warmup=600, n_leap=8, key=key)
+chain, mean_depth, max_depth = run_nuts(logp, q_last, n_samples=1500,
                                         eps=eps, Minv_np=Minv, key=key)
 ```
 
@@ -122,6 +134,20 @@ Validated on a corr-0.9, 25:1-variance Gaussian and on banana / funnel targets
   reparametrization** removes the geometry and makes HMC unbiased again.
 - **ESS/sec is the honest efficiency metric** — acceptance fraction is a
   misleading proxy.
+
+## Development
+
+```bash
+pixi run test                                   # full suite on the default device
+MLXMC_TEST_DEVICE=cpu pixi run test             # force the CPU backend
+MLXMC_TEST_DEVICE=gpu pixi run test             # force the Metal GPU
+```
+
+The suite (`tests/`) checks moment recovery for every sampler, warmup's Σ
+estimate, the affine-invariance identity, and the autocorrelation-time
+diagnostics. CI runs it on an Apple-silicon runner across both backends (the CPU
+leg is required; the GPU leg is allowed to fail, since hosted macOS runners may
+not expose a usable Metal device).
 
 ## References
 

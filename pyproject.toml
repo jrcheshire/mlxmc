@@ -1,6 +1,6 @@
 [project]
 authors = [{name = "Jamie Cheshire", email = "cheshire@caltech.edu"}]
-dependencies = ["mlx>=0.29.3,<0.30"]
+dependencies = ["mlx>=0.29.3,<0.30", "numpy>=2,<3"]
 description = "MCMC samplers in Apple MLX"
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
@@ -21,8 +21,13 @@ platforms = ["osx-arm64"]
 mlxmc = { path = ".", editable = true }
 
 [tool.pixi.tasks]
+test = "pytest"
 
 [tool.pixi.dependencies]
 python = ">=3.10,<3.13"
 numpy = ">=2.4.6,<3"
 matplotlib = ">=3.10.9,<4"
+pytest = ">=8,<9"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

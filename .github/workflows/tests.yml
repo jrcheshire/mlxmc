@@ -1,0 +1,35 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    # Apple-silicon runner: MLX needs arm64 macOS. The CPU leg is required; the GPU
+    # leg is allowed to fail because GitHub's virtualized macOS runners may not expose
+    # a usable Metal device (mlxmc is fp32 on both backends, so coverage is equivalent).
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [cpu, gpu]
+    continue-on-error: ${{ matrix.device == 'gpu' }}
+    env:
+      MLXMC_TEST_DEVICE: ${{ matrix.device }}
+    name: test (${{ matrix.device }})
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: prefix-dev/setup-pixi@v0.8.1
+        with:
+          manifest-path: pyproject.toml
+          # Enforce the pixi.lock co-commit invariant: fail if the lock is stale.
+          locked: true
+
+      - name: MLX device info
+        run: pixi run python -c "import mlx.core as mx; print('MLX default device:', mx.default_device()); print('requested:', '${{ matrix.device }}')"
+
+      - name: Run tests
+        run: pixi run test
