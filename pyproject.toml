@@ -9,6 +9,9 @@ readme = "README.md"
 requires-python = ">= 3.11"
 version = "0.1.0"
 
+[project.optional-dependencies]
+viz = ["matplotlib>=3.10,<4"]   # only examples/plot_hard_targets.py needs it
+
 [build-system]
 build-backend = "hatchling.build"
 requires = ["hatchling"]
@@ -26,8 +29,16 @@ test = "pytest"
 [tool.pixi.dependencies]
 python = ">=3.10,<3.13"
 numpy = ">=2.4.6,<3"
-matplotlib = ">=3.10.9,<4"
 pytest = ">=8,<9"
+
+# matplotlib is only needed by examples/plot_hard_targets.py, so it lives in an
+# optional `viz` environment: `pixi run -e viz python examples/plot_hard_targets.py`.
+[tool.pixi.feature.viz.dependencies]
+matplotlib = ">=3.10.9,<4"
+
+[tool.pixi.environments]
+default = { solve-group = "default" }
+viz = { features = ["viz"], solve-group = "default" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

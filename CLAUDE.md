@@ -5,9 +5,11 @@ with MCMC samplers — the "BlackJAX-shaped gap" (MLX has no mature PPL). Also J
 first hands-on taste of the MLX transform stack, coming from JAX.
 
 ## Environment
-Pixi project; installs `mlxmc` editable (src layout). Core deps `mlx`, `numpy`;
-`matplotlib` + `pytest` in the env. Run examples / tests:
+Pixi project; installs `mlxmc` editable (src layout). Core deps `mlx`, `numpy`; `pytest` in
+the env. `matplotlib` is optional — it lives in a separate `viz` pixi environment / `[viz]`
+pip extra (only `plot_hard_targets.py` uses it). Run examples / tests:
 - `pixi run --manifest-path ~/mlxmc/pyproject.toml python examples/<name>.py`
+- `pixi run --manifest-path ~/mlxmc/pyproject.toml -e viz python examples/plot_hard_targets.py` (plotting)
 - `pixi run --manifest-path ~/mlxmc/pyproject.toml test` (pytest; `MLXMC_TEST_DEVICE=cpu|gpu` pins the backend)
 
 Now a git repo (local `main`, GitHub remote) with BSD-3-Clause LICENSE, README, and a

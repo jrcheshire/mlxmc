@@ -25,6 +25,8 @@ jobs:
       - uses: prefix-dev/setup-pixi@v0.8.1
         with:
           manifest-path: pyproject.toml
+          # Tests run in the default env; the optional `viz` env (matplotlib) isn't needed.
+          environments: default
           # Enforce the pixi.lock co-commit invariant: fail if the lock is stale.
           locked: true
 

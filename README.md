@@ -32,7 +32,7 @@ The package lives under `src/mlxmc/`; runnable demos and the benchmark study are
 | `hard_targets.py` | Banana + funnel benchmark (`lscan` / `dscan` modes). |
 | `nuts_funnel.py` | NUTS correctness on the Gaussian; `funnel` mode for the masking-overhead study. |
 | `affine_invariance.py` | Empirical proof of affine invariance (same RNG → bit-identical acceptance under an affine map). |
-| `plot_hard_targets.py` | Renders `hard_targets_figure.png`. |
+| `plot_hard_targets.py` | Renders `hard_targets_figure.png` (needs the optional `viz` env). |
 
 ## Why MLX
 
@@ -56,11 +56,13 @@ This is a [pixi](https://pixi.sh) project (installs the package editable):
 
 ```bash
 pixi install
-pixi run python examples/gaussian_ess.py        # ensemble vs HMC vs preconditioned
-pixi run python examples/nuts_funnel.py funnel   # several examples have demo modes
+pixi run python examples/gaussian_ess.py             # ensemble vs HMC vs preconditioned
+pixi run python examples/nuts_funnel.py funnel        # several examples have demo modes
+pixi run -e viz python examples/plot_hard_targets.py  # plotting needs the optional viz env
 ```
 
-Or install into any environment with pip: `pip install -e .` (needs `mlx`, so arm64 macOS).
+Or install into any environment with pip: `pip install -e .` (needs `mlx`, so arm64
+macOS). Add the plotting extra with `pip install -e ".[viz]"` (matplotlib).
 
 ## Usage
 
