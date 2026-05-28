@@ -1,7 +1,11 @@
 [project]
 authors = [{name = "Jamie Cheshire", email = "cheshire@caltech.edu"}]
 dependencies = ["mlx>=0.29.3,<0.30"]
+description = "MCMC samplers in Apple MLX"
+license = "BSD-3-Clause"
+license-files = ["LICENSE"]
 name = "mlxmc"
+readme = "README.md"
 requires-python = ">= 3.11"
 version = "0.1.0"
 
