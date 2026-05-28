@@ -36,10 +36,16 @@ run on demand or re-enable the push/PR triggers. Tests run locally via `pixi run
   divergences) are rejected, not propagated. `warmup`, `run_chain`, `DualAveraging`.
 - **`nuts.py`** — NUTS (multinomial), vectorized over chains. Tree-doubling recursion in host
   Python; each leapfrog leaf `vmap`+`compile`'d; per-chain U-turn + masking (the MLX
-  no-`while_loop` pattern); pairs with `warmup` for (eps, M). Validated exact on the Gaussian
-  (cov 24.97 vs 25). **Gotcha:** the top-level sample update must gate on subtree validity
-  `s'` (H&G Alg 3) — adopting proposals from internally-U-turned subtrees over-disperses, a
-  bias that compounds with tree depth (caught vs known Σ; the mean alone looked fine).
+  no-`while_loop` pattern). Validated exact on the Gaussian (cov 24.97 vs 25). `make_nuts`,
+  `run_nuts`, and **`nuts_warmup`** — NUTS-specific warmup (dual-averaging on NUTS's own
+  tree-averaged leaf-acceptance stat, H&G Alg 6), the principled alternative to borrowing
+  `warmup`'s fixed-L eps. `eps` is a per-step arg to the step (so dual-averaging varies it
+  without recompiling the leaf); `Minv` is closed over the compile, so a new M (per warmup
+  window) rebuilds the step (few recompiles, not per step). **Gotcha:** the top-level sample
+  update must gate on subtree validity `s'` (H&G Alg 3) — adopting proposals from
+  internally-U-turned subtrees over-disperses, a bias that compounds with tree depth (caught
+  vs known Σ; the mean alone looked fine). The leaf-accept stat, by contrast, counts *all*
+  leaves (valid or not), per H&G Alg 6.
 - **`diagnostics.py`** — effective sample size / integrated autocorrelation (emcee-style, FFT +
   Sokal window); `report` for ESS/sec. `integrated_time` skips zero-variance (stuck) walkers —
   one would otherwise NaN-poison the walker-averaged autocorrelation. Pure numpy, no MLX import.
@@ -177,10 +183,10 @@ optimizer mutation), not immutable pytrees.
 ## Next
 **Done:** warmup mass-matrix adaptation; banana + centered/non-centered funnel + dim scan +
 `eps`-jitter; **NUTS** validated exact on the Gaussian, funnel-tested, masking overhead
-quantified; **NUTS D-scan (gate 3)** on NC funnel; **NUTS masking-overhead figure panel**.
-Remaining:
-- **NUTS-specific warmup:** NUTS currently borrows the fixed-L warmup's `eps`/`M`; do proper
-  dual-averaging against NUTS's own acceptance statistic (tree-averaged Metropolis prob).
+quantified; **NUTS D-scan (gate 3)** on NC funnel; **NUTS masking-overhead figure panel**;
+**NUTS-specific warmup** (`nuts_warmup`) — dual-averaging on NUTS's leaf-accept stat; on the
+Gaussian it tunes a distinctly larger eps than the borrowed fixed-L value (1.25 vs 1.10 at
+L=8), recovers Σ identically, and mixes at least as well (τ 3.0 vs 3.8). Remaining:
 - **Riemannian / in-place funnel:** a position-dependent metric to handle the *centered*
   funnel without reparametrizing (the non-centered trick doesn't generalize to all models).
 - **Scale-up to tax the GPU** (the memory-bound MLX thesis) — current runs top out at D=50 /

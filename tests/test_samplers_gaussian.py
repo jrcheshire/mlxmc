@@ -8,7 +8,7 @@ import mlx.core as mx
 import numpy as np
 import pytest
 
-from mlxmc import run_chain, run_ensemble, run_hmc, run_nuts, run_phmc, warmup
+from mlxmc import nuts_warmup, run_chain, run_ensemble, run_hmc, run_nuts, run_phmc, warmup
 from mlxmc.targets import GAUSSIAN_MU, GAUSSIAN_SIGMA, gaussian_logp
 from util import per_dim_stats, structured
 
@@ -81,3 +81,18 @@ def test_nuts():
     flat = np.asarray(chain).reshape(-1, 2)
     cov_rel = np.linalg.norm(np.cov(flat.T) - GAUSSIAN_SIGMA) / np.linalg.norm(GAUSSIAN_SIGMA)
     assert cov_rel < 0.05, f"NUTS cov Frobenius rel err {cov_rel:.3f}"
+
+
+def test_nuts_with_nuts_warmup():
+    """End-to-end with NUTS-specific tuning: nuts_warmup -> run_nuts -> Gaussian moments
+    and cov within the same Standard tolerances as the borrowed-warmup test_nuts."""
+    key = mx.random.key(5)
+    k_init, k_warm, k_nuts = mx.random.split(key, 3)
+    q0 = mx.random.normal(shape=(200, 2), key=k_init) * 5.0
+    q_last, eps, Minv = nuts_warmup(gaussian_logp, q0, n_warmup=600, key=k_warm)
+    chain, _, _ = run_nuts(gaussian_logp, q_last, n_samples=800,
+                           eps=eps, Minv_np=Minv, key=k_nuts)
+    check_gaussian(chain)
+    flat = np.asarray(chain).reshape(-1, 2)
+    cov_rel = np.linalg.norm(np.cov(flat.T) - GAUSSIAN_SIGMA) / np.linalg.norm(GAUSSIAN_SIGMA)
+    assert cov_rel < 0.05, f"NUTS (nuts_warmup) cov Frobenius rel err {cov_rel:.3f}"

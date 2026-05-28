@@ -1,6 +1,7 @@
 """NUTS exercised two ways:
 
-  default       -- correctness on the canonical Gaussian (recovered cov vs true Sigma).
+  default       -- correctness on the canonical Gaussian (recovered cov vs true Sigma), using
+                   NUTS-specific warmup (dual-averaging on NUTS's own leaf-acceptance stat).
   funnel        -- NUTS vs jittered fixed-L HMC vs ensemble on the centered/non-centered
                    funnel. NUTS uses a GLOBAL static M (from warmup), so the centered
                    funnel's position-dependent scale should still bite (improved but not
@@ -21,10 +22,11 @@ import mlx.core as mx
 import numpy as np
 
 from mlxmc.diagnostics import integrated_time, report
-from mlxmc.nuts import run_nuts
+from mlxmc.nuts import nuts_warmup, run_nuts
 from mlxmc.targets import (GAUSSIAN_MU, GAUSSIAN_SIGMA, funnel_logp,
                            funnel_nc_logp, gaussian_logp)
-from mlxmc.warmup import warmup
+from mlxmc.warmup import warmup   # fixed-L warmup: used by funnel_compare / dscan for a fair
+                                  # comparison against fixed-L HMC (same eps/M for both)
 
 # Sampling-phase-timed HMC/ensemble runners (and the ESS/sec helper) live in the sibling example.
 from hard_targets import mixing, sample_ensemble, sample_hmc
@@ -108,14 +110,15 @@ if __name__ == "__main__":
     k_init, k_warm, k_nuts = mx.random.split(key, 3)
 
     q0 = mx.random.normal(shape=(n_chains, 2), key=k_init) * 5.0
-    q_last, eps_bar, Minv = warmup(gaussian_logp, q0, n_warmup, 8, k_warm)
-    print(f"warmup: eps {eps_bar:.3f},  estimated M^-1 diag {np.diag(Minv).round(2)}")
+    # NUTS-specific warmup: dual-averaging on NUTS's own leaf-acceptance statistic (no fixed L).
+    q_last, eps_bar, Minv = nuts_warmup(gaussian_logp, q0, n_warmup, k_warm)
+    print(f"nuts_warmup: eps {eps_bar:.3f},  estimated M^-1 diag {np.diag(Minv).round(2)}")
 
     t0 = time.time()
     chain, mean_depth, max_depth = run_nuts(gaussian_logp, q_last, n_sample, eps_bar, Minv, k_nuts)
     mx.eval(chain)
     dt = time.time() - t0
-    report(chain, "NUTS (multinomial, warmup eps+M)", dt)
+    report(chain, "NUTS (multinomial, nuts_warmup eps+M)", dt)
 
     s = np.array(chain).reshape(-1, 2)
     print(f"  tree depth mean {mean_depth:.2f} / max {max_depth}  (low mean vs max => leapfrog masked)")

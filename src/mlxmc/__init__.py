@@ -9,7 +9,7 @@ from mlxmc import targets
 from mlxmc.diagnostics import autocorr_1d, integrated_time, report
 from mlxmc.ensemble import make_sampler, run_ensemble
 from mlxmc.hmc import make_hmc, run_hmc
-from mlxmc.nuts import make_nuts, run_nuts
+from mlxmc.nuts import make_nuts, nuts_warmup, run_nuts
 from mlxmc.preconditioned import make_phmc, run_phmc
 from mlxmc.warmup import DualAveraging, make_warmup_step, run_chain, warmup
 
@@ -20,7 +20,7 @@ __all__ = [
     "make_hmc", "run_hmc",
     "make_phmc", "run_phmc",
     "DualAveraging", "make_warmup_step", "warmup", "run_chain",
-    "make_nuts", "run_nuts",
+    "make_nuts", "run_nuts", "nuts_warmup",
     "autocorr_1d", "integrated_time", "report",
     "targets",
 ]
