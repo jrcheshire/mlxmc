@@ -8,8 +8,11 @@
                    jittered fixed-L HMC with no manual L. Watch mean tree depth << max:
                    that's the vectorized-NUTS masking overhead (the batch pays the deepest
                    chain's cost).
+  dscan         -- gate 3: NUTS vs adapted fixed-L HMC across dimension on the non-centered
+                   funnel. Does adaptive trajectory length hold accuracy + efficiency as D
+                   grows, and how does the tree depth (hence masking cost) scale?
 
-Run:  python examples/nuts_funnel.py [funnel]
+Run:  python examples/nuts_funnel.py [funnel|dscan]
 """
 import sys
 import time
@@ -23,8 +26,8 @@ from mlxmc.targets import (GAUSSIAN_MU, GAUSSIAN_SIGMA, funnel_logp,
                            funnel_nc_logp, gaussian_logp)
 from mlxmc.warmup import warmup
 
-# Sampling-phase-timed HMC/ensemble runners live in the sibling benchmark example.
-from hard_targets import sample_ensemble, sample_hmc
+# Sampling-phase-timed HMC/ensemble runners (and the ESS/sec helper) live in the sibling example.
+from hard_targets import mixing, sample_ensemble, sample_hmc
 
 
 def funnel_compare(key):
@@ -57,9 +60,46 @@ def funnel_compare(key):
         _summary("ensemble", ec, edt)
 
 
+def nuts_dim_scan(key, Ds=(2, 5, 10, 25, 50), n_leap=10, n_chains=500, n_sample=800):
+    """Gate 3: NUTS vs adapted fixed-L HMC across D on the non-centered funnel (the case that's
+    cheap and comparable to the existing HMC d-scan; the centered funnel is the masking
+    pathology and is far too slow to scan). Reports worst-dim tau, ESS/sec, dim-0 recovered std
+    (v ~ N(0,9) -> true std 3.0), and the NUTS tree-depth mean/max -- the masking-overhead tell:
+    the batched leapfrog pays the deepest chain, so mean << max means wasted work.
+
+    NUTS wall time includes its one-time compile (consistent with how NUTS was timed before);
+    sample_hmc excludes compile via untimed warm steps, so read the ESS/sec as indicative."""
+    print("\n==== gate 3: NUTS vs adapted HMC across D on the NON-CENTERED funnel "
+          "(dim0 v true std 3.00) ====")
+    for D in Ds:
+        key, kqh, kw, kn, kh = mx.random.split(key, 5)
+        q0 = mx.random.normal(shape=(n_chains, D), key=kqh)
+        q_last, eps_bar, Minv = warmup(funnel_nc_logp, q0, 600, n_leap, kw)
+
+        t0 = time.time()
+        ch, mdepth, maxdepth = run_nuts(funnel_nc_logp, q_last, n_sample, eps_bar, Minv, kn)
+        mx.eval(ch)
+        ndt = time.time() - t0
+        n_tau, n_es = mixing(ch, ndt)
+        n_std0 = np.array(ch).reshape(-1, D)[:, 0].std()
+
+        hc, h_dt = sample_hmc(funnel_nc_logp, q_last, eps_bar, Minv, kh, n_leap, n_sample)
+        mx.eval(hc)
+        h_tau, h_es = mixing(hc, h_dt)
+        h_std0 = np.array(hc).reshape(-1, D)[:, 0].std()
+
+        print(f"  D={D:3d}  NUTS: tau {n_tau:6.1f}  ESS/s {n_es:11,.0f}  std0 {n_std0:4.2f}  "
+              f"depth {mdepth:.1f}/{maxdepth}  wall {ndt:5.1f}s   |   "
+              f"HMC(L={n_leap},jit): tau {h_tau:6.1f}  ESS/s {h_es:11,.0f}  std0 {h_std0:4.2f}")
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "funnel":
         funnel_compare(mx.random.key(0))
+        sys.exit(0)
+
+    if len(sys.argv) > 1 and sys.argv[1] == "dscan":
+        nuts_dim_scan(mx.random.key(0))
         sys.exit(0)
 
     Sigma = GAUSSIAN_SIGMA

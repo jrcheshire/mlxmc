@@ -137,6 +137,15 @@ Vectorized multinomial NUTS; reuses `warmup.py` for (eps, M) and adapts only tra
 - **NUTS buys robustness, not peak speed:** auto-tunes L, dodges the fixed-L resonance, correct
   everywhere — but jittered fixed-L HMC beats its ESS/sec on easy targets (NC funnel 1.8M vs
   180k). NUTS = safe default; hand-tuned/jittered HMC = the speed play.
+- **Gate 3 — D-scan on the NC funnel (2026-05-27, `examples/nuts_funnel.py dscan`):**
+  NUTS holds accuracy across D=2→50 (dim0 v std **3.00 at every D**, true 3.0) and keeps
+  τ ≤ 2.5; tree depth grows only gently (mean 1.8 → 3.0). At **D=50 adaptive-L NUTS beats
+  fixed-L HMC** (τ 1.1 vs 21.1) — HMC's hand-fixed L=10 degrades at high D while NUTS
+  adapts. The D=10 row caught a seed-dependent masking cameo (a few chains wandered to
+  depth 5, mean 2.4 → wall ~4× neighbors), illustrating the batch-pays-deepest mechanism
+  in miniature. The figure's new masking panel quantifies it at the funnel mouth: centered
+  funnel mean depth 3.2 / max 10 / 31s wall vs NC funnel 1.8 / 2 / 1s — **31× wall-time
+  ratio** for the same target up to a reparametrization.
 
 ## fp32 caveat — FUNDAMENTAL to MLX (and to scope decisions)
 Apple Metal GPUs have **no float64** in hardware; MLX has fp64 only on the **CPU**
@@ -166,17 +175,17 @@ optimizer mutation), not immutable pytrees.
   array values). `warmup.py` does this for `eps`/`M⁻¹`; `n_leap` stays a Python int (structural).
 
 ## Next
-**Done:** warmup mass-matrix adaptation (`warmup.py`); banana + centered/non-centered funnel,
-the dimension scan, `eps`-jitter (`hard_targets.py`); **NUTS** (`nuts.py`) — validated exact on
-the Gaussian, funnel-tested, masking overhead quantified. Remaining:
+**Done:** warmup mass-matrix adaptation; banana + centered/non-centered funnel + dim scan +
+`eps`-jitter; **NUTS** validated exact on the Gaussian, funnel-tested, masking overhead
+quantified; **NUTS D-scan (gate 3)** on NC funnel; **NUTS masking-overhead figure panel**.
+Remaining:
 - **NUTS-specific warmup:** NUTS currently borrows the fixed-L warmup's `eps`/`M`; do proper
   dual-averaging against NUTS's own acceptance statistic (tree-averaged Metropolis prob).
 - **Riemannian / in-place funnel:** a position-dependent metric to handle the *centered*
   funnel without reparametrizing (the non-centered trick doesn't generalize to all models).
-- **NUTS D-scan** (gate 3, not yet run) + **scale-up to tax the GPU** (the memory-bound MLX
-  thesis) — current runs top out at D=50 / ~3s and barely warm the M4 Max.
-- **Scale-up to tax the GPU** (the memory-bound MLX thesis) — the dimension scan tops out at
-  D=50 and barely warms the M4 Max; push much higher / many more chains.
+- **Scale-up to tax the GPU** (the memory-bound MLX thesis) — current runs top out at D=50 /
+  a few seconds and barely warm the M4 Max; push much higher D / many more chains. **The
+  project's actual point**; correctness is in hand, scale is not.
 - Possible upstream contribution: **MLX bindings to ducc0** (CPU C++ SHT/NUFFT — cleaner
   than the JAX version since unified memory avoids host↔device copies), best contributed
   *into ducc0* (it already has a JAX interface) rather than maintained standalone.
