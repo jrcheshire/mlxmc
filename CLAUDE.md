@@ -13,8 +13,10 @@ pip extra (only `plot_hard_targets.py` uses it). Run examples / tests:
 - `pixi run --manifest-path ~/mlxmc/pyproject.toml test` (pytest; `MLXMC_TEST_DEVICE=cpu|gpu` pins the backend)
 
 Now a git repo (local `main`, GitHub remote) with BSD-3-Clause LICENSE, README, and a
-GitHub Actions workflow (`.github/workflows/tests.yml`) running the suite on an
-Apple-silicon runner across CPU (required) + GPU (allowed-to-fail) — see [project-mlxmc].
+GitHub Actions workflow (`.github/workflows/tests.yml`, CPU + GPU matrix on an Apple-silicon
+runner). **Automatic CI is disabled** (`workflow_dispatch` only) — macOS runner minutes are
+billed at 10x and this is a Mac-only package, so it's not worth running on every push for now;
+run on demand or re-enable the push/PR triggers. Tests run locally via `pixi run test`. See [project-mlxmc].
 
 ## Layout
 **Package `src/mlxmc/`** (the library — import `from mlxmc import ...`):

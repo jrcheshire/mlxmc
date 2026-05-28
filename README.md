@@ -147,9 +147,10 @@ MLXMC_TEST_DEVICE=gpu pixi run test             # force the Metal GPU
 
 The suite (`tests/`) checks moment recovery for every sampler, warmup's Σ
 estimate, the affine-invariance identity, and the autocorrelation-time
-diagnostics. CI runs it on an Apple-silicon runner across both backends (the CPU
-leg is required; the GPU leg is allowed to fail, since hosted macOS runners may
-not expose a usable Metal device).
+diagnostics. There's a GitHub Actions workflow (`.github/workflows/tests.yml`,
+CPU + GPU matrix on an Apple-silicon runner), but automatic CI is **disabled** to
+avoid burning macOS runner minutes — run it on demand from the Actions tab, or
+re-enable the triggers in the workflow.
 
 ## References
 
