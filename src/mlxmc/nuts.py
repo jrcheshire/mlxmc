@@ -1,7 +1,7 @@
 """NUTS (No-U-Turn Sampler), multinomial variant (Hoffman & Gelman 2014 + Betancourt 2017),
 vectorized over chains in MLX.
 
-The MLX story (Phase 2): MLX has no `while_loop`/`scan` (see CLAUDE.md), so the tree-doubling
+The MLX story (Phase 2): MLX has no `while_loop`/`scan` (see the README's "Why MLX"), so the tree-doubling
 recursion runs in **host Python** while each leapfrog leaf is `vmap`'d over all chains and
 `mx.compile`'d. Chains U-turn at different depths; a finished chain still rides along in the
 batched leapfrog but is **masked out** (`mx.where` on a per-chain `cont` flag), so it's frozen

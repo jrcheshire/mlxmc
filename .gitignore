@@ -7,3 +7,15 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .ipynb_checkpoints/
+
+# Build / test artifacts
+build/
+dist/
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Local project notes / Claude Code instructions — kept on disk, not part of the
+# public package (its findings live in the README instead).
+CLAUDE.md

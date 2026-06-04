@@ -113,12 +113,19 @@ chain, mean_depth, max_depth = run_nuts(logp, q_last, n_samples=1500,
                                         eps=eps, Minv_np=Minv, key=key)
 ```
 
+> **Return shapes differ by sampler.** `run_ensemble` and `run_hmc` return
+> `(samples, accept_frac)` with `samples` flattened to `(n_draws, D)`.
+> `run_phmc`, `run_chain` (post-warmup HMC), and `run_nuts` return a structured
+> `(steps, chains, D)` chain — the layout `mlxmc.diagnostics` expects for ESS —
+> and `run_nuts` additionally returns the mean/max tree depth.
+
 ## Findings
 
-![Sampler benchmarks on the banana and funnel targets](hard_targets_figure.png)
+![Sampler benchmarks on the banana and funnel targets](https://raw.githubusercontent.com/jrcheshire/mlxmc/main/hard_targets_figure.png)
 
-Validated on a corr-0.9, 25:1-variance Gaussian and on banana / funnel targets
-(full notes in [`CLAUDE.md`](CLAUDE.md)):
+Validated on a corr-0.9, 25:1-variance Gaussian and on banana / funnel targets;
+every number below is reproducible with the scripts in
+[`examples/`](https://github.com/jrcheshire/mlxmc/tree/main/examples):
 
 - **Affine-invariant ensemble** is the robust low-D default: gradient-free,
   tuning-free, handles ill-conditioning for free (acceptance is bit-identical
@@ -127,9 +134,15 @@ Validated on a corr-0.9, 25:1-variance Gaussian and on banana / funnel targets
   (τ≈2 vs ≈26). A **warmup-adapted dense mass matrix** recovers the true Σ to
   <1% Frobenius error and buys ~7–11× the ESS/sec — HMC's version of affine
   invariance, earned rather than supplied.
+- **Fixed-`L` HMC has a trajectory resonance:** on near-Gaussian targets, when
+  `eps·L` lands near a multiple of 2π the trajectory returns to its start and
+  mixing collapses. Jittering `eps` per trajectory cures it; NUTS's adaptive
+  trajectory length is the principled fix.
 - **NUTS** is validated exact on the Gaussian (recovered covariance 24.97 vs 25)
   and auto-tunes trajectory length, but vectorized NUTS pays a real masking cost
-  when trajectory lengths are heterogeneous (the funnel mouth/neck).
+  when trajectory lengths are heterogeneous — with no `while_loop`, every chain
+  runs to the deepest chain's tree depth, up to a ~30× wall-time penalty at the
+  funnel mouth versus the same target reparametrized.
 - **Geometry matters more than the sampler:** on the *centered* funnel the
   gradient-free ensemble beats a global-metric HMC, because a constant mass matrix
   is wrong everywhere when the scale is position-dependent; a **non-centered
@@ -160,4 +173,4 @@ re-enable the triggers in the workflow.
 
 ## License
 
-[BSD-3-Clause](LICENSE).
+[BSD-3-Clause](https://github.com/jrcheshire/mlxmc/blob/main/LICENSE).

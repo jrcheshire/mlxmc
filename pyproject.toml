@@ -2,15 +2,33 @@
 authors = [{name = "Jamie Cheshire", email = "cheshire@caltech.edu"}]
 dependencies = ["mlx>=0.29.3,<0.30", "numpy>=2,<3"]
 description = "MCMC samplers in Apple MLX"
+keywords = ["mcmc", "hmc", "nuts", "ensemble-sampler", "bayesian", "sampling", "mlx", "apple-silicon"]
 license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 name = "mlxmc"
 readme = "README.md"
 requires-python = ">= 3.11"
 version = "0.1.0"
+# No `License ::` classifier: PEP 639 license expression (above) is the single source of truth,
+# and pairing the two trips a deprecation warning in modern build/upload tooling.
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Mathematics",
+]
 
 [project.optional-dependencies]
 viz = ["matplotlib>=3.10,<4"]   # only examples/plot_hard_targets.py needs it
+
+[project.urls]
+Homepage = "https://github.com/jrcheshire/mlxmc"
+Repository = "https://github.com/jrcheshire/mlxmc"
+Issues = "https://github.com/jrcheshire/mlxmc/issues"
 
 [build-system]
 build-backend = "hatchling.build"
