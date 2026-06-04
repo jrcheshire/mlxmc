@@ -1,14 +1,12 @@
 # mlxmc
 
-**MCMC samplers in Apple [MLX](https://github.com/ml-explore/mlx).** A small,
-gradient-aware sampler toolkit built directly on the MLX transform stack
-(`grad` / `vmap` / `compile`), filling the "BlackJAX-shaped gap" — MLX has no
-mature probabilistic-programming layer yet.
+MCMC samplers written in Apple [MLX](https://github.com/ml-explore/mlx), using its
+`grad` / `vmap` / `compile` transforms. MLX has no probabilistic-programming library
+yet (nothing like BlackJAX or NumPyro), so this is a first pass at one.
 
-> **Status: exploratory research code.** The samplers work and are validated
-> (a test suite checks moment recovery, Σ-estimation, affine invariance, and the
-> autocorrelation diagnostics on both the CPU and Metal backends), but the API is
-> young and may change. Expect churn.
+> **Status: research code.** The samplers are tested (moment recovery, Σ-estimation,
+> affine invariance, and the autocorrelation diagnostics, on both the CPU and Metal
+> backends), but the API is young and likely to change.
 
 ## What's here
 
@@ -160,10 +158,10 @@ MLXMC_TEST_DEVICE=gpu pixi run test             # force the Metal GPU
 
 The suite (`tests/`) checks moment recovery for every sampler, warmup's Σ
 estimate, the affine-invariance identity, and the autocorrelation-time
-diagnostics. There's a GitHub Actions workflow (`.github/workflows/tests.yml`,
-CPU + GPU matrix on an Apple-silicon runner), but automatic CI is **disabled** to
-avoid burning macOS runner minutes — run it on demand from the Actions tab, or
-re-enable the triggers in the workflow.
+diagnostics. A GitHub Actions workflow (`.github/workflows/tests.yml`) runs the
+CPU + GPU matrix on an Apple-silicon runner for pull requests to `main` (and on
+manual dispatch from the Actions tab). Direct pushes to `main` don't trigger it,
+which keeps the (10x-billed) macOS runner minutes down.
 
 ## References
 
