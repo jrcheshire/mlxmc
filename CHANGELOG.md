@@ -4,7 +4,7 @@ All notable changes to `mlxmc` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-06-03
 
 Initial public release.
 
