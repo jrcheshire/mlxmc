@@ -1,14 +1,24 @@
 name: tests
 
-# Automatic CI is disabled to avoid burning GitHub's macOS runner minutes (billed at
-# 10x Linux). This is a Mac-only package, so every job needs a macOS runner -- not worth
-# it on every push for now. The workflow is kept for on-demand runs (Actions tab -> Run
-# workflow); re-enable automatic CI by uncommenting the push/pull_request triggers.
+# CI runs only on pull requests to main (plus manual dispatch from the Actions tab) to
+# limit GitHub's macOS runner minutes (billed at 10x Linux). This is a Mac-only package,
+# so every job needs a macOS runner; PRs are deliberate and infrequent, while direct
+# pushes to main do NOT trigger CI. Doc-only changes are skipped via paths-ignore. To
+# also run on pushes, add a `push: { branches: [main] }` key here.
 on:
   workflow_dispatch:
-  # push:
-  #   branches: [main]
-  # pull_request:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+      - '**.png'
+
+# Cancel an in-progress run when the same PR gets a new push -- only the latest commit is
+# worth testing, and it stops macOS jobs from stacking up.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   test:
