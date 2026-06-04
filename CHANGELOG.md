@@ -4,7 +4,7 @@ All notable changes to `mlxmc` are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and the project aims to follow
 [Semantic Versioning](https://semver.org/).
 
-## [0.1.0] — 2026-06-03
+## [0.1.1] — 2026-06-04
 
 Initial public release.
 
@@ -15,4 +15,4 @@ Initial public release.
 - ESS / integrated-autocorrelation diagnostics (`diagnostics`).
 - Example targets with known moments: correlated Gaussian, banana, centered / non-centered funnel (`targets`).
 
-[0.1.0]: https://github.com/jrcheshire/mlxmc/releases/tag/v0.1.0
+[0.1.1]: https://github.com/jrcheshire/mlxmc/releases/tag/v0.1.1
