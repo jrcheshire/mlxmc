@@ -1,5 +1,5 @@
 [project]
-authors = [{name = "Jamie Cheshire", email = "cheshire@caltech.edu"}]
+authors = [{name = "James Cheshire", email = "cheshire@caltech.edu"}]
 dependencies = ["mlx>=0.29.3,<0.30", "numpy>=2,<3"]
 description = "MCMC samplers in Apple MLX"
 keywords = ["mcmc", "hmc", "nuts", "ensemble-sampler", "bayesian", "sampling", "mlx", "apple-silicon"]
