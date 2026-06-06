@@ -1014,7 +1014,7 @@ packages:
 - pypi: .
   name: mlxmc
   requires_dist:
-  - mlx>=0.29.3,<0.30
+  - mlx>=0.29.3,<0.32
   - numpy>=2,<3
   - matplotlib>=3.10,<4 ; extra == 'viz'
   requires_python: '>=3.11'
