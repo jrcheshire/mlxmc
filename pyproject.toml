@@ -8,7 +8,7 @@ license-files = ["LICENSE"]
 name = "mlxmc"
 readme = "README.md"
 requires-python = ">= 3.11"
-version = "0.1.1"
+version = "0.2.0"
 # No `License ::` classifier: PEP 639 license expression (above) is the single source of truth,
 # and pairing the two trips a deprecation warning in modern build/upload tooling.
 classifiers = [
