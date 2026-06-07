@@ -40,17 +40,20 @@ E0 = mx.random.normal(shape=(n_walkers, D), key=k_init)   # matched to base N(0,
 E0_mapped = E0 @ A_T + b                                   # matched to q = N(b, A A^T)
 
 # SAME key for both runs -> identical random stream.
-xs, acc_base = run_ensemble(logp_base, E0, n_steps, burn, key)
-ys, acc_tr = run_ensemble(logq, E0_mapped, n_steps, burn, key)
+rx = run_ensemble(logp_base, E0, n_steps, burn, key)
+ry = run_ensemble(logq, E0_mapped, n_steps, burn, key)
+acc_base, acc_tr = rx.accept_frac, ry.accept_frac
 
-mapped = xs @ A_T + b
-max_dev = float(mx.max(mx.abs(ys - mapped)))
+# .flat shares the same (walker, draw) ordering for both runs, so the affine image is element-wise.
+xs, ys = rx.flat, ry.flat
+mapped = xs @ A_np.T + b_np
+max_dev = float(np.abs(ys - mapped).max())
 
 print(f"condition number:   base target 1   |   transformed target {np.linalg.cond(A_np @ A_np.T):.0f}")
 print(f"acceptance:         base {acc_base:.6f}   transformed {acc_tr:.6f}   (identical => invariant)")
 print(f"max |y - (A x + b)| over {ys.shape[0]:,} samples:  {max_dev:.2e}   (=> exact affine image, to float32)")
 
-y = np.array(ys)
+y = ys
 print("\ntransformed run recovers N(b, A A^T):")
 print(f"  mean recovered {np.round(y.mean(0), 2)}   vs true {b_np}")
 print(f"  cov diag recovered {np.round(np.cov(y.T).diagonal(), 1)}   vs true {np.round((A_np @ A_np.T).diagonal(), 1)}")

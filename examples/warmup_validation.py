@@ -40,12 +40,10 @@ if __name__ == "__main__":
     # burn=0. Both runs start from the same q_last; only the metric differs.
     t0 = time.time()
     adapted = run_chain(gaussian_logp, q_last, n_sample, 0, eps_bar, Minv_est, k_ad, n_leap)
-    mx.eval(adapted)
     a_ess, a_dt = report(adapted, "adapted (estimated M, tuned eps)", time.time() - t0)
 
     t0 = time.time()
     oracle = run_chain(gaussian_logp, q_last, n_sample, 0, eps_bar, Sigma, k_or, n_leap)
-    mx.eval(oracle)
     o_ess, o_dt = report(oracle, "oracle (true Sigma, same eps)", time.time() - t0)
 
     print("\n=== ESS/sec (adapted vs oracle; close => warmup recovered the metric) ===")

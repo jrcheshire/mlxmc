@@ -18,6 +18,7 @@ means rebuilding the closure -- a few recompile events over a warmup, not per st
 import mlx.core as mx
 import numpy as np
 
+from mlxmc.result import Result
 from mlxmc.warmup import DualAveraging, regularize_cov, stan_windows
 
 DMAX = 1000.0      # divergence threshold on the Hamiltonian error
@@ -77,12 +78,12 @@ def make_nuts(logp_single, Minv_np, max_tree_depth=10):
             leaf_a = mx.where(div, mx.zeros_like(lw1),
                               mx.exp(mx.minimum(mx.zeros_like(lw1), lw1 - lw0)))
             ones = mx.ones_like(lw1)
-            return th1, r1, th1, r1, th1, mx.where(div, NEG, lw1), ~div, leaf_a, ones
+            return th1, r1, th1, r1, th1, mx.where(div, NEG, lw1), ~div, leaf_a, ones, div
 
         kL, kR, ks = mx.random.split(key, 3)
-        tm, rm, tp, rp, p1, lw1, s1, a1, c1 = build(theta, r, lw0, depth - 1, dirn, eps, kL)
+        tm, rm, tp, rp, p1, lw1, s1, a1, c1, d1 = build(theta, r, lw0, depth - 1, dirn, eps, kL)
         lt, lr = wsel(dirn < 0, tm, tp), wsel(dirn < 0, rm, rp)      # extend the leading edge
-        tm2, rm2, tp2, rp2, p2, lw2, s2, a2, c2 = build(lt, lr, lw0, depth - 1, dirn, eps, kR)
+        tm2, rm2, tp2, rp2, p2, lw2, s2, a2, c2, d2 = build(lt, lr, lw0, depth - 1, dirn, eps, kR)
 
         ftm, frm = wsel(dirn < 0, tm2, tm), wsel(dirn < 0, rm2, rm)  # stitched full endpoints
         ftp, frp = wsel(dirn < 0, tp, tp2), wsel(dirn < 0, rp, rp2)
@@ -92,8 +93,9 @@ def make_nuts(logp_single, Minv_np, max_tree_depth=10):
         s = s1 & s2 & no_uturn(ftm, frm, ftp, frp)
         # Accept stat sums all leaves traversed (H&G: n_alpha counts every leapfrog leaf,
         # not just the ones in valid subtrees). State propagation still gates on s1 as before.
+        # Divergence is OR'd over the whole subtree -- a divergence anywhere taints the draw.
         return (wsel(s1, ftm, tm), wsel(s1, frm, rm), wsel(s1, ftp, tp), wsel(s1, frp, rp),
-                wsel(s1, prop, p1), mx.where(s1, lw, lw1), s1 & s, a1 + a2, c1 + c2)
+                wsel(s1, prop, p1), mx.where(s1, lw, lw1), s1 & s, a1 + a2, c1 + c2, d1 | d2)
 
     def step(theta, key, eps):
         N = theta.shape[0]
@@ -107,6 +109,7 @@ def make_nuts(logp_single, Minv_np, max_tree_depth=10):
         depths = mx.zeros((N,), dtype=mx.int32)
         accept_sum = mx.zeros((N,))
         accept_cnt = mx.zeros((N,))
+        diverged = mx.array(np.zeros(N, dtype=bool))
 
         for depth in range(max_tree_depth):
             cont_was = cont                     # gate accept-stat accumulation on entering state
@@ -114,7 +117,7 @@ def make_nuts(logp_single, Minv_np, max_tree_depth=10):
             dirn = mx.where(mx.random.uniform(shape=(N,), key=kdir) < 0.5, -1.0, 1.0)
             depths = depths + cont.astype(mx.int32)
             lt, lr = wsel(dirn < 0, tm, tp), wsel(dirn < 0, rm, rp)
-            ntm, nrm, ntp, nrp, prop, lw_sub, s_sub, a_sub, c_sub = build(
+            ntm, nrm, ntp, nrp, prop, lw_sub, s_sub, a_sub, c_sub, div_sub = build(
                 lt, lr, lw0, depth, dirn, eps, ksub)
 
             new_tm, new_rm = wsel(dirn < 0, ntm, tm), wsel(dirn < 0, nrm, rm)
@@ -130,31 +133,38 @@ def make_nuts(logp_single, Minv_np, max_tree_depth=10):
             # Chains that had already stopped contribute no new leaves this iteration.
             accept_sum = accept_sum + mx.where(cont_was, a_sub, mx.zeros_like(a_sub))
             accept_cnt = accept_cnt + mx.where(cont_was, c_sub, mx.zeros_like(c_sub))
+            diverged = diverged | mx.where(cont_was, div_sub, mx.zeros_like(div_sub))
             cont = cont & s_sub & no_uturn(new_tm, new_rm, new_tp, new_rp)
-            mx.eval(cont, sample, tm, tp, rm, rp, lw_tree, depths, accept_sum, accept_cnt)
+            mx.eval(cont, sample, tm, tp, rm, rp, lw_tree, depths, accept_sum, accept_cnt, diverged)
             if cont.sum().item() == 0:          # host-side early stop once all chains U-turned
                 break
 
         # Per-chain leaf-mean accept, then mean over chains. Empty count -> 1 to avoid 0/0.
         per_chain = accept_sum / mx.maximum(accept_cnt, mx.ones_like(accept_cnt))
-        return sample, depths, per_chain.mean()
+        return sample, depths, per_chain.mean(), diverged
 
     return step
 
 
 def run_nuts(logp_single, theta0, n_samples, eps, Minv_np, key, max_tree_depth=10):
-    """Returns (chain (T,N,D), mean_tree_depth, max_tree_depth_seen). theta0 already warmed.
-    max-vs-mean depth is the masking-overhead tell: the batch pays the deepest chain's cost."""
+    """Sample with NUTS. Returns a `Result` (theta0 already warmed); `sample_stats` carries
+    per-draw `diverging` (the divergence info NUTS computes but used to throw away) and
+    `tree_depth` -- max-vs-mean depth is the masking-overhead tell, the batch pays the
+    deepest chain's cost."""
     step = make_nuts(logp_single, Minv_np, max_tree_depth)
-    chain, depth_sum, depth_max, theta = [], 0.0, 0, theta0
+    chain, depths_all, divs, theta = [], [], [], theta0
     for _ in range(n_samples):
         key, k = mx.random.split(key, 2)
-        theta, depths, _ = step(theta, k, eps)    # discard the leaf-accept stat for sampling
-        mx.eval(theta, depths)
+        theta, depths, _, diverged = step(theta, k, eps)    # discard the leaf-accept stat
+        mx.eval(theta, depths, diverged)
         chain.append(theta)
-        depth_sum += float(depths.mean())
-        depth_max = max(depth_max, int(depths.max()))
-    return mx.stack(chain, axis=0), depth_sum / n_samples, depth_max
+        depths_all.append(depths)
+        divs.append(diverged)
+    return Result.from_chain(
+        mx.stack(chain, axis=0),
+        sample_stats={"diverging": np.array(mx.stack(divs, axis=0)),
+                      "tree_depth": np.array(mx.stack(depths_all, axis=0))},
+    )
 
 
 def nuts_warmup(logp_single, q0, n_warmup, key, eps0=0.25, target_accept=0.8,
@@ -191,7 +201,7 @@ def nuts_warmup(logp_single, q0, n_warmup, key, eps0=0.25, target_accept=0.8,
     q, window_samples = q0, []
     for t in range(n_warmup):
         key, k = mx.random.split(key, 2)
-        q, _depths, accept_prob = step(q, k, eps)
+        q, _depths, accept_prob, _div = step(q, k, eps)
         mx.eval(q, accept_prob)
         a = float(accept_prob)
         if not np.isfinite(a):

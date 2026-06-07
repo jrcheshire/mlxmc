@@ -12,6 +12,8 @@ MLX transforms on display:
 """
 import mlx.core as mx
 
+from mlxmc.result import Result
+
 
 def make_sampler(logp_single, n_dim, a=2.0):
     """Return a compiled half-ensemble update for the G&W stretch move."""
@@ -38,7 +40,9 @@ def make_sampler(logp_single, n_dim, a=2.0):
 
 
 def run_ensemble(logp_single, ensemble, n_steps, burn, key, a=2.0):
-    """Sample with the affine-invariant ensemble. Returns (flat samples, accept_frac)."""
+    """Sample with the affine-invariant ensemble. Returns a `Result` with
+    `independent_chains=False` -- the walkers are correlated, not independent chains, so
+    cross-walker Rhat/ESS are optimistic (see `Result.summary`)."""
     n_walkers, n_dim = ensemble.shape
     half = n_walkers // 2
     update_half = make_sampler(logp_single, n_dim, a)
@@ -55,6 +59,6 @@ def run_ensemble(logp_single, ensemble, n_steps, burn, key, a=2.0):
         mx.eval(e, accepted)                  # keep the lazy graph shallow
         if t >= burn:
             chain.append(e)
-    samples = mx.stack(chain, axis=0).reshape(-1, n_dim)
     accept_frac = float(accepted) / (n_steps * n_walkers)
-    return samples, accept_frac
+    return Result.from_chain(mx.stack(chain, axis=0),     # (T, n_walkers, n_dim)
+                             accept_frac=accept_frac, independent_chains=False)

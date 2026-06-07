@@ -5,8 +5,9 @@ MCMC samplers written in Apple [MLX](https://github.com/ml-explore/mlx), using i
 yet (nothing like BlackJAX or NumPyro), so this is a first pass at one.
 
 > **Status: research code.** The samplers are tested (moment recovery, Σ-estimation,
-> affine invariance, and the autocorrelation diagnostics, on both the CPU and Metal
-> backends), but the API is young and likely to change.
+> affine invariance, the autocorrelation diagnostics, and the convergence diagnostics
+> validated against [ArviZ](https://www.arviz.org/), on both the CPU and Metal backends),
+> but the API is young and likely to change. Provided as-is, no guarantees.
 
 ## What's here
 
@@ -19,8 +20,10 @@ The package lives under `src/mlxmc/`; runnable demos and the benchmark study are
 | `hmc` | Hamiltonian Monte Carlo, identity mass. `grad ∘ vmap` batched over chains. `make_hmc`, `run_hmc`. |
 | `preconditioned` | Mass-matrix HMC (M = Σ⁻¹). `make_phmc`, `run_phmc`. |
 | `warmup` | Stan-style warmup: dual-averaging step size + windowed **dense** mass-matrix estimation. `warmup`, `run_chain`. |
-| `nuts` | NUTS (multinomial; Hoffman & Gelman 2014), vectorized over chains. `make_nuts`, `run_nuts`. |
-| `diagnostics` | Effective sample size / integrated autocorrelation time (FFT + Sokal window); the cross-sampler **ESS/sec** metric. |
+| `nuts` | NUTS (multinomial; Hoffman & Gelman 2014), vectorized over chains. Reports divergences. `make_nuts`, `run_nuts`. |
+| `result` | `Result` — the unified return type for every sampler: draws `(chain, draw, dim)`, `sample_stats` (divergences, tree depth), `.summary()`, `.to_arviz()`. |
+| `diagnostics` | **Convergence**: rank-normalized split-R̂, bulk/tail-ESS, MCSE (Vehtari et al. 2021), validated against ArviZ. **Efficiency**: integrated autocorrelation time + the cross-sampler **ESS/sec** metric. |
+| `transforms` | Constrained-parameter bijectors (`Exp`, `Sigmoid`, …) + `constrain()` — sample bounded/positive parameters without hand-writing the log-Jacobian. |
 | `targets` | Example log-densities: correlated Gaussian, banana, centered / non-centered funnel, with known moments. |
 
 | Example (`examples/`) | What it shows |
@@ -30,6 +33,7 @@ The package lives under `src/mlxmc/`; runnable demos and the benchmark study are
 | `hard_targets.py` | Banana + funnel benchmark (`lscan` / `dscan` modes). |
 | `nuts_funnel.py` | NUTS correctness on the Gaussian; `funnel` mode for the masking-overhead study. |
 | `affine_invariance.py` | Empirical proof of affine invariance (same RNG → bit-identical acceptance under an affine map). |
+| `constrained_model.py` | Infer (μ, σ>0) of a Normal with a parameter transform, then `Result.summary()` in natural space. |
 | `plot_hard_targets.py` | Renders `hard_targets_figure.png` (needs the optional `viz` env). |
 
 ## Why MLX
@@ -44,9 +48,26 @@ this code:
   (NUTS) is the hard case — `mlxmc.nuts` runs every chain to a fixed `max_tree_depth`
   and **masks** finished chains.
 - **fp32 on the GPU.** Apple Metal has no fp64 in hardware (MLX has fp64 only on
-  the CPU backend). This is fine for sampling — Monte Carlo error (~1/√ESS) swamps
-  fp32 roundoff (~1e-6) — but ill-conditioned linear algebra (covariance, Cholesky
-  in warmup) is kept host-side in numpy fp64; only the leapfrog runs on the GPU.
+  the CPU backend). See the precision envelope below.
+
+### Numerical precision (fp32)
+
+fp32-on-GPU is a permanent constraint, not a bug to fix, so it's worth being explicit
+about where it's fine and where it isn't:
+
+- **Fine (the regime this package targets):** smooth, moderate-dimensional targets where
+  Monte Carlo error (~1/√ESS, typically 1–3%) swamps fp32 roundoff (~1e-6). All the
+  examples here live here. Ill-conditioned linear algebra (covariance, Cholesky in
+  `warmup`) is already kept host-side in numpy **fp64**; only the leapfrog runs fp32 on
+  the GPU — generalize that pattern for any precision-sensitive sub-step.
+- **Watch out (validate against fp64 first):** large log-likelihood **sums** (e.g. N≳1e5
+  data points — roundoff accumulates and corrupts Metropolis acceptance); constrained
+  transforms near a **boundary** (logit/log of values near their limit); long or stiff
+  trajectories (deep NUTS trees). For these, run the CPU fp64 backend to check, or sum in
+  fp64 host-side.
+
+The defensible niche is **fp32-tolerant, memory-bound, differentiable/stochastic** work —
+not fp64-precision HPC.
 
 ## Install
 
@@ -91,7 +112,9 @@ from mlxmc import run_ensemble
 
 key, k = mx.random.split(key)
 ensemble = mx.random.normal(shape=(2000, 2), key=k) * 5.0     # (n_walkers, D)
-samples, accept_frac = run_ensemble(logp, ensemble, n_steps=3000, burn=1000, key=key)
+result = run_ensemble(logp, ensemble, n_steps=3000, burn=1000, key=key)
+print(result.accept_frac)
+result.summary()                                             # mean / sd / mcse / ESS / R̂
 ```
 
 **HMC, hand-tuned**, and **NUTS after Stan-style warmup** (same `logp`):
@@ -102,20 +125,40 @@ from mlxmc import run_hmc, warmup, run_nuts
 key, k = mx.random.split(key)
 q0 = mx.random.normal(shape=(1000, 2), key=k) * 5.0           # (n_chains, D)
 
-samples, acc = run_hmc(logp, q0, n_steps=1500, burn=500,
-                       eps=0.15, n_leap=40, key=key)
+result = run_hmc(logp, q0, n_steps=1500, burn=500, eps=0.15, n_leap=40, key=key)
 
 # Warmup adapts (eps, dense M); NUTS then adapts trajectory length itself.
 q_last, eps, Minv = warmup(logp, q0, n_warmup=600, n_leap=8, key=key)
-chain, mean_depth, max_depth = run_nuts(logp, q_last, n_samples=1500,
-                                        eps=eps, Minv_np=Minv, key=key)
+result = run_nuts(logp, q_last, n_samples=1500, eps=eps, Minv_np=Minv, key=key)
+print("divergences:", result.n_divergent)                    # NUTS surfaces these now
+result.summary()
 ```
 
-> **Return shapes differ by sampler.** `run_ensemble` and `run_hmc` return
-> `(samples, accept_frac)` with `samples` flattened to `(n_draws, D)`.
-> `run_phmc`, `run_chain` (post-warmup HMC), and `run_nuts` return a structured
-> `(steps, chains, D)` chain — the layout `mlxmc.diagnostics` expects for ESS —
-> and `run_nuts` additionally returns the mean/max tree depth.
+> **Every sampler returns a `Result`.** `result.samples` is `(chain, draw, dim)`,
+> `result.flat` pools to `(chain·draw, dim)`, `result.accept_frac` is the acceptance, and
+> `result.sample_stats` carries per-draw `diverging` / `tree_depth` (NUTS). `result.summary()`
+> prints rank-normalized split-R̂, bulk/tail-ESS, and MCSE per parameter; `result.to_arviz()`
+> hands off to [ArviZ](https://www.arviz.org/) (`pip install 'mlxmc[arviz]'`) for the full
+> plotting/diagnostic suite. The warmup helpers (`warmup`, `nuts_warmup`) instead return the
+> tuning triple `(q_last, eps, Minv)`.
+
+**Constrained parameters** — sample positive / bounded parameters without writing a
+Jacobian by hand (see `examples/constrained_model.py`):
+
+```python
+from mlxmc import Transform, Identity, Exp, constrain, run_nuts
+
+def logp_constrained(theta):          # theta = (mu, sigma > 0)
+    mu, sigma = theta[0], theta[1]
+    return -0.5 * (((data - mu) / sigma) ** 2).sum() - data.shape[0] * mx.log(sigma)
+
+# mu free, sigma positive; constrain() adds the log-Jacobian so you sample in R^2.
+logp_u, transform = constrain(logp_constrained, Transform([Identity(), Exp()]))
+result = run_nuts(logp_u, u0, n_samples=1000, eps=eps, Minv_np=Minv, key=key)
+result.transform = transform          # map draws back to natural (mu, sigma) space
+result.summary()                      # reported in constrained space
+natural_draws = result.constrained()
+```
 
 ## Findings
 
@@ -154,11 +197,16 @@ every number below is reproducible with the scripts in
 pixi run test                                   # full suite on the default device
 MLXMC_TEST_DEVICE=cpu pixi run test             # force the CPU backend
 MLXMC_TEST_DEVICE=gpu pixi run test             # force the Metal GPU
+pixi run -e dev test                            # incl. the ArviZ-validated diagnostics tests
 ```
 
 The suite (`tests/`) checks moment recovery for every sampler, warmup's Σ
-estimate, the affine-invariance identity, and the autocorrelation-time
-diagnostics. A GitHub Actions workflow (`.github/workflows/tests.yml`) runs the
+estimate, the affine-invariance identity, the autocorrelation-time diagnostics,
+divergence reporting, the constrained-parameter transforms, and the convergence
+diagnostics (R̂ / bulk-tail-ESS / MCSE) against ArviZ. The ArviZ comparison needs
+`arviz` + `scipy`, which live in the optional `dev` pixi environment (run those via
+`pixi run -e dev test`); they're skipped in the lean default env. A GitHub Actions
+workflow (`.github/workflows/tests.yml`) runs the
 CPU + GPU matrix on an Apple-silicon runner for pull requests to `main` (and on
 manual dispatch from the Actions tab). Direct pushes to `main` don't trigger it,
 which keeps the (10x-billed) macOS runner minutes down.

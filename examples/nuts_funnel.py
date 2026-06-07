@@ -32,6 +32,15 @@ from mlxmc.warmup import warmup   # fixed-L warmup: used by funnel_compare / dsc
 from hard_targets import mixing, sample_ensemble, sample_hmc
 
 
+def _nuts_chain(*args, **kw):
+    """run_nuts -> (T,N,D numpy chain, mean tree depth, max tree depth). run_nuts now returns
+    a Result; the benchmark helpers below predate it and want the time-major chain + depth
+    summary, so adapt here in one place."""
+    res = run_nuts(*args, **kw)
+    td = res.sample_stats["tree_depth"]
+    return np.transpose(res.samples, (1, 0, 2)), float(td.mean()), int(td.max())
+
+
 def funnel_compare(key):
     def _summary(label, chain_mx, dt, extra=""):
         c = np.array(chain_mx)
@@ -52,8 +61,7 @@ def funnel_compare(key):
         q_last, eps_bar, Minv = warmup(logp, q0, 600, 8, kw)
 
         t0 = time.time()
-        ch, mdepth, maxdepth = run_nuts(logp, q_last, 1500, eps_bar, Minv, kn)
-        mx.eval(ch)
+        ch, mdepth, maxdepth = _nuts_chain(logp, q_last, 1500, eps_bar, Minv, kn)
         ndt = time.time() - t0
         _summary("NUTS", ch, ndt, extra=f"wall {ndt:5.1f}s  depth mean {mdepth:.1f}/max {maxdepth}")
         hc, hdt = sample_hmc(logp, q_last, eps_bar, Minv, kh, 8, 1500)
@@ -79,8 +87,7 @@ def nuts_dim_scan(key, Ds=(2, 5, 10, 25, 50), n_leap=10, n_chains=500, n_sample=
         q_last, eps_bar, Minv = warmup(funnel_nc_logp, q0, 600, n_leap, kw)
 
         t0 = time.time()
-        ch, mdepth, maxdepth = run_nuts(funnel_nc_logp, q_last, n_sample, eps_bar, Minv, kn)
-        mx.eval(ch)
+        ch, mdepth, maxdepth = _nuts_chain(funnel_nc_logp, q_last, n_sample, eps_bar, Minv, kn)
         ndt = time.time() - t0
         n_tau, n_es = mixing(ch, ndt)
         n_std0 = np.array(ch).reshape(-1, D)[:, 0].std()
@@ -115,8 +122,7 @@ if __name__ == "__main__":
     print(f"nuts_warmup: eps {eps_bar:.3f},  estimated M^-1 diag {np.diag(Minv).round(2)}")
 
     t0 = time.time()
-    chain, mean_depth, max_depth = run_nuts(gaussian_logp, q_last, n_sample, eps_bar, Minv, k_nuts)
-    mx.eval(chain)
+    chain, mean_depth, max_depth = _nuts_chain(gaussian_logp, q_last, n_sample, eps_bar, Minv, k_nuts)
     dt = time.time() - t0
     report(chain, "NUTS (multinomial, nuts_warmup eps+M)", dt)
 

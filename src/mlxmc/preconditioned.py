@@ -7,6 +7,8 @@ With the right M, HMC mixes with far fewer, cheaper leapfrog steps.
 """
 import mlx.core as mx
 
+from mlxmc.result import Result
+
 
 def make_phmc(logp_single, eps, n_leap, Minv, Mhalf):
     grad_logp = mx.vmap(mx.grad(logp_single))
@@ -41,16 +43,18 @@ def make_phmc(logp_single, eps, n_leap, Minv, Mhalf):
 
 
 def run_phmc(logp_single, q0, n_steps, burn, eps, n_leap, key, Minv, Mhalf):
-    """Sample with preconditioned (mass-matrix) HMC. Returns the structured (T, N, D) chain.
+    """Sample with preconditioned (mass-matrix) HMC. Returns a `Result`.
 
     `Minv` is M^{-1} (= the covariance you precondition with) and `Mhalf` is chol(M).
     """
     step = make_phmc(logp_single, eps, n_leap, Minv, Mhalf)
-    chain, q = [], q0
+    chain, accepted, q = [], mx.array(0), q0
     for t in range(n_steps):
         key, k = mx.random.split(key, 2)
-        q, _ = step(q, k)
-        mx.eval(q)
+        q, na = step(q, k)
+        accepted = accepted + na
+        mx.eval(q, accepted)
         if t >= burn:
             chain.append(q)
-    return mx.stack(chain, axis=0)
+    return Result.from_chain(mx.stack(chain, axis=0),
+                             accept_frac=float(accepted) / (n_steps * q0.shape[0]))
