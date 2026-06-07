@@ -23,6 +23,8 @@ import math
 import mlx.core as mx
 import numpy as np
 
+from mlxmc.result import Result
+
 
 class DualAveraging:
     """Nesterov dual averaging for step-size adaptation (Hoffman & Gelman 2014, Alg. 5).
@@ -163,16 +165,19 @@ def warmup(logp_single, q0, n_warmup, n_leap, key, eps0=0.25, target_accept=0.8,
 
 
 def run_chain(logp_single, q0, n_steps, burn, eps, Minv_np, key, n_leap):
-    """Sample with fixed tuned (eps, M). Returns the structured (T, N, D) chain for ESS."""
+    """Sample with fixed tuned (eps, M). Returns a `Result`."""
     step = make_warmup_step(logp_single, n_leap)
     eps_a = mx.array(eps, dtype=mx.float32)
     Minv_a = mx.array(Minv_np.astype(np.float32))
     Mhalf_T = mx.array(np.linalg.cholesky(np.linalg.inv(Minv_np)).T.astype(np.float32))
-    chain, q = [], q0
+    chain, acc_sum, q = [], 0.0, q0
     for t in range(n_steps):
         key, k = mx.random.split(key, 2)
-        q, _ = step(q, k, eps_a, Minv_a, Mhalf_T)
-        mx.eval(q)
+        q, acc = step(q, k, eps_a, Minv_a, Mhalf_T)
+        mx.eval(q, acc)
         if t >= burn:
             chain.append(q)
-    return mx.stack(chain, axis=0)
+            acc_sum += float(acc)
+    n_kept = n_steps - burn
+    return Result.from_chain(mx.stack(chain, axis=0),
+                             accept_frac=acc_sum / n_kept if n_kept > 0 else None)

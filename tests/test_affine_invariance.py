@@ -41,11 +41,15 @@ def test_affine_invariance():
     E0_mapped = E0 @ A_T + b                                  # matched to q = N(b, A A^T)
 
     # SAME key for both runs -> identical random stream.
-    xs, acc_base = run_ensemble(logp_base, E0, 100, 0, key)
-    ys, acc_tr = run_ensemble(logq, E0_mapped, 100, 0, key)
+    rx = run_ensemble(logp_base, E0, 100, 0, key)
+    ry = run_ensemble(logq, E0_mapped, 100, 0, key)
+    acc_base, acc_tr = rx.accept_frac, ry.accept_frac
 
     assert acc_base == acc_tr, f"acceptance not identical: {acc_base} vs {acc_tr} (a decision flipped)"
 
+    # .flat shares the same (walker, draw) ordering for both runs, so the element-wise affine
+    # image comparison is valid.
+    xs, ys = rx.flat, ry.flat
     mapped = np.array(xs) @ A_np.T + b_np
     max_dev = float(np.abs(np.array(ys) - mapped).max())
     assert max_dev < 0.1, f"affine image deviation {max_dev:.2e} exceeds 0.1"

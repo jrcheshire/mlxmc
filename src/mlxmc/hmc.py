@@ -12,6 +12,8 @@ ensemble on an ill-conditioned target is visible. See `preconditioned` and
 """
 import mlx.core as mx
 
+from mlxmc.result import Result
+
 
 def make_hmc(logp_single, eps, n_leap):
     grad_logp = mx.vmap(mx.grad(logp_single))   # (n, D) -> (n, D)
@@ -44,7 +46,7 @@ def make_hmc(logp_single, eps, n_leap):
 
 
 def run_hmc(logp_single, q0, n_steps, burn, eps, n_leap, key):
-    """Sample with fixed-step, fixed-L HMC. Returns (flat samples, accept_frac)."""
+    """Sample with fixed-step, fixed-L HMC. Returns a `Result`."""
     step = make_hmc(logp_single, eps, n_leap)
     chain, accepted = [], mx.array(0)
     q = q0
@@ -55,5 +57,5 @@ def run_hmc(logp_single, q0, n_steps, burn, eps, n_leap, key):
         mx.eval(q, accepted)
         if t >= burn:
             chain.append(q)
-    samples = mx.stack(chain, axis=0).reshape(-1, q0.shape[1])
-    return samples, float(accepted) / (n_steps * q0.shape[0])
+    return Result.from_chain(mx.stack(chain, axis=0),
+                             accept_frac=float(accepted) / (n_steps * q0.shape[0]))
