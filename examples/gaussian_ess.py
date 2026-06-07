@@ -77,8 +77,7 @@ if __name__ == "__main__":
     key, ki = mx.random.split(key)
     q0p = mx.random.normal(shape=(1000, 2), key=ki) * 5.0
     t0 = time.time()
-    pc = run_phmc(gaussian_logp, q0p, 1500, 500, 0.7, 6, key, Minv, Mhalf)
-    mx.eval(pc)
+    pc = run_phmc(gaussian_logp, q0p, 1500, 500, 0.7, 6, key, Minv, Mhalf)   # returns a Result
     p_ess, p_dt = report(pc, "HMC preconditioned M=Sigma^-1 (eps=0.7, L=6)", time.time() - t0)
 
     print("\n=== ESS/sec ===")

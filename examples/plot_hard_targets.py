@@ -23,6 +23,13 @@ from hard_targets import mixing, sample_ensemble, sample_hmc
 N_LEAP = 12
 
 
+def _nuts_chain(*args, **kw):
+    """run_nuts (now returns a Result) -> (T,N,D numpy chain, mean depth, max depth)."""
+    res = run_nuts(*args, **kw)
+    td = res.sample_stats["tree_depth"]
+    return np.transpose(res.samples, (1, 0, 2)), float(td.mean()), int(td.max())
+
+
 def get_samples(logp, q0, e0, key, n_leap=N_LEAP):
     """(HMC samples, ensemble samples) as flat (n, D) arrays for a 2-D target."""
     kw, kh, ke = mx.random.split(key, 3)
@@ -39,8 +46,7 @@ def nuts_depth(logp, key, n_chains=300, n_sample=400, n_leap=10):
     q0 = mx.random.normal(shape=(n_chains, 2), key=ki) * 1.0
     q_last, eps_bar, Minv = warmup(logp, q0, 600, n_leap, kw)
     t0 = time.time()
-    ch, mdepth, maxdepth = run_nuts(logp, q_last, n_sample, eps_bar, Minv, kn)
-    mx.eval(ch)
+    _ch, mdepth, maxdepth = _nuts_chain(logp, q_last, n_sample, eps_bar, Minv, kn)
     return mdepth, maxdepth, time.time() - t0
 
 
@@ -88,8 +94,7 @@ if __name__ == "__main__":
         hc, hdt = sample_hmc(funnel_nc_logp, q_last, eps_bar, Minv, kh, 10, 800)
         ec, edt = sample_ensemble(funnel_nc_logp, e0, ke, 1500, 800)
         t0 = time.time()
-        nch, ndm, ndx = run_nuts(funnel_nc_logp, q_last, 800, eps_bar, Minv, kn)
-        mx.eval(nch)
+        nch, ndm, ndx = _nuts_chain(funnel_nc_logp, q_last, 800, eps_bar, Minv, kn)
         ndt = time.time() - t0
         mx.eval(hc, ec)
         hmc_eps.append(mixing(hc, hdt)[1])
