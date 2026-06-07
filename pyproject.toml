@@ -24,6 +24,7 @@ classifiers = [
 
 [project.optional-dependencies]
 viz = ["matplotlib>=3.10,<4"]   # only examples/plot_hard_targets.py needs it
+arviz = ["arviz>=0.18"]         # only Result.to_arviz() needs it (pulls xarray/scipy)
 
 [project.urls]
 Homepage = "https://github.com/jrcheshire/mlxmc"
@@ -54,9 +55,17 @@ pytest = ">=8,<9"
 [tool.pixi.feature.viz.dependencies]
 matplotlib = ">=3.10.9,<4"
 
+# arviz + scipy are only needed to *validate* the native diagnostics against the reference
+# implementation (tests/test_diagnostics_vs_arviz.py) and for Result.to_arviz(); they're kept
+# out of the default runtime env. Run the full validation with `pixi run -e dev test`.
+[tool.pixi.feature.dev.dependencies]
+arviz = ">=0.18"
+scipy = ">=1.11"
+
 [tool.pixi.environments]
 default = { solve-group = "default" }
 viz = { features = ["viz"], solve-group = "default" }
+dev = { features = ["dev"], solve-group = "default" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
