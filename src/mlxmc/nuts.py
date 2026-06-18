@@ -219,3 +219,192 @@ def nuts_warmup(logp_single, q0, n_warmup, key, eps0=0.25, target_accept=0.8,
             eps = da.eps_bar
 
     return q, da.eps_bar, Minv_np
+
+
+# ---------------------------------------------------------------------------
+# Serial (single-chain, no-vmap) NUTS
+# ---------------------------------------------------------------------------
+#
+# make_nuts/run_nuts vmap the leapfrog over chains (grad_logp = mx.vmap(mx.grad)).
+# Some forward models have primitives MLX cannot vmap -- a conv net's Pad raises
+# "Pad vmap is NYI" -- and a conv forward can't batch over per-chain WEIGHTS
+# anyway, so those targets cannot be vectorized over chains at all. The serial
+# variants below run ONE chain per step with grad computed directly (mx.grad, no
+# vmap), so they work wherever a single grad does; multi-chain is a host loop.
+# Same multinomial-NUTS algorithm and same Result -- slower (no batching), but it
+# runs where the vmap path raises. With one chain the per-chain wsel/cont masking
+# collapses to host-side scalars, and the recursion SHORT-CIRCUITS an invalid
+# subtree (classic Hoffman & Gelman 2014 Alg 3) instead of masking it.
+
+
+def make_nuts_serial(logp_single, Minv_np, max_tree_depth=10):
+    """Single-chain NUTS step (no vmap); see the section comment for when to use
+    this over make_nuts. Returns step(theta, key, eps) -> (sample, depth,
+    mean_accept, diverged) for a single (D,) state. run_nuts_serial loops it over
+    chains. The leapfrog is NOT mx.compile'd (unlike make_nuts): the targets that
+    need the serial path tend to dominate on the grad eval, and skipping compile
+    keeps it robust to logp closures that mutate module state per call."""
+    grad_logp = mx.grad(logp_single)
+    Minv = mx.array(Minv_np.astype(np.float32))
+    Mhalf_T = mx.array(np.linalg.cholesky(np.linalg.inv(Minv_np)).T.astype(np.float32))
+    zero = mx.array(0.0)
+    neg = mx.array(NEG)
+
+    def leap(theta, r, se):                        # one leapfrog; se = signed step (scalar)
+        r = r + 0.5 * se * grad_logp(theta)
+        theta = theta + se * (r @ Minv)
+        r = r + 0.5 * se * grad_logp(theta)
+        return theta, r
+
+    def joint(theta, r):                            # -H = logp - 0.5 r^T M^-1 r
+        return logp_single(theta) - 0.5 * ((r @ Minv) * r).sum()
+
+    def no_uturn(tm, rm, tp, rp):                   # True = keep going (generalized metric)
+        diff = tp - tm
+        left = (diff * (rm @ Minv)).sum()
+        right = (diff * (rp @ Minv)).sum()
+        return bool((left >= 0).item()) and bool((right >= 0).item())
+
+    def build(theta, r, lw0, depth, dirn, eps, key):
+        """Recursive subtree builder (one chain). Returns the two endpoints, the
+        multinomial proposal, the subtree log-weight, a validity flag, and the
+        (accept_sum, count) for the dual-averaging stat."""
+        if depth == 0:                              # base: a single leapfrog in `dirn`
+            th1, r1 = leap(theta, r, dirn * eps)
+            lw1 = joint(th1, r1)
+            div = bool((lw0 - lw1 > DMAX).item()) or not bool(mx.isfinite(lw1).item())
+            # H&G Alg 6 leaf statistic min(1, exp(-Delta_H)); 0 on divergence/NaN.
+            leaf_a = 0.0 if div else float(mx.exp(mx.minimum(zero, lw1 - lw0)).item())
+            return th1, r1, th1, r1, th1, (neg if div else lw1), (not div), leaf_a, 1, div
+
+        kL, kR, ks = mx.random.split(key, 3)
+        tm, rm, tp, rp, p1, lw1, s1, a1, n1, d1 = build(theta, r, lw0, depth - 1, dirn, eps, kL)
+        if not s1:                                  # short-circuit: subtree already invalid
+            return tm, rm, tp, rp, p1, lw1, False, a1, n1, d1
+        left = dirn < 0
+        lt, lr = (tm, rm) if left else (tp, rp)     # extend the leading edge
+        tm2, rm2, tp2, rp2, p2, lw2, s2, a2, n2, d2 = build(lt, lr, lw0, depth - 1, dirn, eps, kR)
+        if left:                                    # stitched full-subtree endpoints
+            ftm, frm, ftp, frp = tm2, rm2, tp, rp
+        else:
+            ftm, frm, ftp, frp = tm, rm, tp2, rp2
+        pick2 = bool((mx.random.uniform(key=ks) < expit(lw2 - lw1)).item())
+        prop = p2 if pick2 else p1
+        s = s2 and no_uturn(ftm, frm, ftp, frp)
+        return ftm, frm, ftp, frp, prop, logaddexp(lw1, lw2), s, a1 + a2, n1 + n2, (d1 or d2)
+
+    def step(theta, key, eps):
+        km, k = mx.random.split(key, 2)
+        r0 = mx.random.normal(shape=theta.shape, key=km) @ Mhalf_T   # ~ N(0, M)
+        lw0 = joint(theta, r0)
+        tm = tp = theta
+        rm = rp = r0
+        sample, lw_tree = theta, lw0
+        accept_sum, accept_cnt = 0.0, 0
+        diverged, depth_done = False, 0
+
+        for depth in range(max_tree_depth):
+            k, kdir, ksub, ksel = mx.random.split(k, 4)
+            dirn = -1.0 if bool((mx.random.uniform(key=kdir) < 0.5).item()) else 1.0
+            left = dirn < 0
+            lt, lr = (tm, rm) if left else (tp, rp)
+            ntm, nrm, ntp, nrp, prop, lw_sub, s_sub, a_sub, n_sub, div_sub = build(
+                lt, lr, lw0, depth, dirn, eps, ksub)
+            accept_sum += a_sub
+            accept_cnt += n_sub
+            diverged = diverged or div_sub
+            depth_done = depth + 1
+            if not s_sub:                           # invalid subtree -> stop, don't adopt
+                break
+            # multinomial: adopt the subtree's proposal with prob W_sub / (W_tree + W_sub).
+            if bool((mx.random.uniform(key=ksel) < expit(lw_sub - lw_tree)).item()):
+                sample = prop
+            lw_tree = logaddexp(lw_tree, lw_sub)
+            if left:
+                tm, rm = ntm, nrm
+            else:
+                tp, rp = ntp, nrp
+            mx.eval(sample, tm, tp, rm, rp, lw_tree)
+            if not no_uturn(tm, rm, tp, rp):
+                break
+
+        return sample, depth_done, accept_sum / max(accept_cnt, 1), diverged
+
+    return step
+
+
+def run_nuts_serial(logp_single, theta0, n_samples, eps, Minv_np, key, max_tree_depth=10):
+    """Serial NUTS (no vmap). `theta0` is (n_chains, D); chains run one at a time in
+    a host loop. Returns a `Result` in the same canonical layout as `run_nuts`,
+    with per-draw `diverging` / `tree_depth`. Use this when the target's grad can't
+    be vmap'd over chains (e.g. a conv-net forward); otherwise prefer `run_nuts`."""
+    step = make_nuts_serial(logp_single, Minv_np, max_tree_depth)
+    theta0 = mx.array(theta0)
+    n_chains, d = theta0.shape
+    chains = np.empty((n_samples, n_chains, d), dtype=np.float32)
+    depths = np.empty((n_samples, n_chains), dtype=np.int32)
+    divs = np.empty((n_samples, n_chains), dtype=bool)
+    for c in range(n_chains):
+        theta = theta0[c]
+        for t in range(n_samples):
+            key, kk = mx.random.split(key, 2)
+            theta, depth, _acc, diverged = step(theta, kk, eps)
+            mx.eval(theta)
+            chains[t, c] = np.asarray(theta)
+            depths[t, c] = depth
+            divs[t, c] = bool(diverged)
+    return Result.from_chain(
+        chains, sample_stats={"diverging": divs, "tree_depth": depths})
+
+
+def nuts_warmup_serial(logp_single, q0, n_warmup, key, eps0=0.25, target_accept=0.8,
+                       init_buffer=75, term_buffer=50, base_window=25, max_tree_depth=10,
+                       minv0=None, estimate_metric=True):
+    """Serial (no-vmap) analogue of `nuts_warmup`. `q0` is (n_chains, D); each warmup
+    iteration steps every chain once and pools the leaf-accept stat for dual averaging.
+
+    `estimate_metric=True` (default) does the Stan-windowed dense-M estimation, starting
+    from `minv0` (or identity). `estimate_metric=False` holds `Minv = minv0` FIXED and
+    tunes only `eps` -- the right mode when a good metric is already known (e.g. a Laplace
+    covariance), which also avoids estimating a dense (D,D) metric from the slow serial
+    chain. Returns `(q_last, eps_bar, Minv_np)` ready for `run_nuts_serial`."""
+    q = mx.array(q0)
+    n_chains, d = q.shape
+    if not estimate_metric and minv0 is None:
+        raise ValueError("estimate_metric=False requires minv0 (the fixed metric)")
+    Minv_np = np.eye(d) if minv0 is None else np.asarray(minv0, dtype=float)
+    init_buffer, term_buffer, window_ends = stan_windows(
+        n_warmup, init_buffer, term_buffer, base_window)
+    boundaries = set(window_ends)
+
+    da = DualAveraging(eps0, target_accept)
+    step = make_nuts_serial(logp_single, Minv_np, max_tree_depth)
+    eps = eps0
+
+    window_samples = []
+    for t in range(n_warmup):
+        accs, new_q = [], []
+        for c in range(n_chains):
+            key, kk = mx.random.split(key, 2)
+            qc, _depth, acc, _div = step(q[c], kk, eps)
+            mx.eval(qc)
+            new_q.append(qc)
+            accs.append(acc)
+        q = mx.stack(new_q)
+        a = float(np.mean(accs))
+        if not np.isfinite(a):
+            a = 0.0                                       # all-divergent iteration -> reject
+        eps = da.update(a)
+
+        if estimate_metric:
+            if init_buffer <= t < (n_warmup - term_buffer):
+                window_samples.append(np.asarray(q))      # (n_chains, d) per slow-window step
+            if (t + 1) in boundaries and window_samples:
+                X = np.concatenate(window_samples, axis=0)    # (steps * n_chains, d)
+                Minv_np = regularize_cov(np.cov(X, rowvar=False), X.shape[0])
+                step = make_nuts_serial(logp_single, Minv_np, max_tree_depth)
+                window_samples = []
+                da.restart(da.eps_bar)
+                eps = da.eps_bar
+
+    return q, da.eps_bar, Minv_np

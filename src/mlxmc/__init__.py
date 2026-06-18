@@ -21,7 +21,14 @@ from mlxmc.diagnostics import (
 )
 from mlxmc.ensemble import make_sampler, run_ensemble
 from mlxmc.hmc import make_hmc, run_hmc
-from mlxmc.nuts import make_nuts, nuts_warmup, run_nuts
+from mlxmc.nuts import (
+    make_nuts,
+    make_nuts_serial,
+    nuts_warmup,
+    nuts_warmup_serial,
+    run_nuts,
+    run_nuts_serial,
+)
 from mlxmc.preconditioned import make_phmc, run_phmc
 from mlxmc.result import Result
 from mlxmc.transforms import Exp, Identity, Sigmoid, Transform, constrain
@@ -38,6 +45,7 @@ __all__ = [
     "make_phmc", "run_phmc",
     "DualAveraging", "make_warmup_step", "warmup", "run_chain",
     "make_nuts", "run_nuts", "nuts_warmup",
+    "make_nuts_serial", "run_nuts_serial", "nuts_warmup_serial",
     "Result",
     "Transform", "Identity", "Exp", "Sigmoid", "constrain",
     "autocorr_1d", "integrated_time", "report",

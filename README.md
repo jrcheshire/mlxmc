@@ -20,7 +20,7 @@ The package lives under `src/mlxmc/`; runnable demos and the benchmark study are
 | `hmc` | Hamiltonian Monte Carlo, identity mass. `grad ∘ vmap` batched over chains. `make_hmc`, `run_hmc`. |
 | `preconditioned` | Mass-matrix HMC (M = Σ⁻¹). `make_phmc`, `run_phmc`. |
 | `warmup` | Stan-style warmup: dual-averaging step size + windowed **dense** mass-matrix estimation. `warmup`, `run_chain`. |
-| `nuts` | NUTS (multinomial; Hoffman & Gelman 2014), vectorized over chains. Reports divergences. `make_nuts`, `run_nuts`. |
+| `nuts` | NUTS (multinomial; Hoffman & Gelman 2014), vectorized over chains. Reports divergences. `make_nuts`, `run_nuts`. **Serial (no-vmap)** variants `make_nuts_serial` / `run_nuts_serial` / `nuts_warmup_serial` run one chain at a time (multi-chain via a host loop) for targets MLX can't vmap over chains — e.g. a conv-net forward (`Pad vmap is NYI`, and conv can't batch per-chain weights). Same algorithm + `Result`, slower. |
 | `result` | `Result` — the unified return type for every sampler: draws `(chain, draw, dim)`, `sample_stats` (divergences, tree depth), `.summary()`, `.to_arviz()`. |
 | `diagnostics` | **Convergence**: rank-normalized split-R̂, bulk/tail-ESS, MCSE (Vehtari et al. 2021), validated against ArviZ. **Efficiency**: integrated autocorrelation time + the cross-sampler **ESS/sec** metric. |
 | `transforms` | Constrained-parameter bijectors (`Exp`, `Sigmoid`, …) + `constrain()` — sample bounded/positive parameters without hand-writing the log-Jacobian. |

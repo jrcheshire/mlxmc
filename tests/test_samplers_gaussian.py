@@ -8,7 +8,18 @@ import mlx.core as mx
 import numpy as np
 import pytest
 
-from mlxmc import Result, nuts_warmup, run_chain, run_ensemble, run_hmc, run_nuts, run_phmc, warmup
+from mlxmc import (
+    Result,
+    nuts_warmup,
+    nuts_warmup_serial,
+    run_chain,
+    run_ensemble,
+    run_hmc,
+    run_nuts,
+    run_nuts_serial,
+    run_phmc,
+    warmup,
+)
 from mlxmc.targets import GAUSSIAN_MU, GAUSSIAN_SIGMA, gaussian_logp
 from util import per_dim_stats
 
@@ -97,3 +108,31 @@ def test_nuts_with_nuts_warmup():
     check_gaussian(result)
     cov_rel = np.linalg.norm(np.cov(result.flat.T) - GAUSSIAN_SIGMA) / np.linalg.norm(GAUSSIAN_SIGMA)
     assert cov_rel < 0.05, f"NUTS (nuts_warmup) cov Frobenius rel err {cov_rel:.3f}"
+
+
+def test_nuts_serial():
+    """Serial (no-vmap) NUTS recovers the Gaussian -- the path for targets whose grad
+    MLX can't vmap over chains (e.g. a conv-net Pad). Same Standard tolerances; fewer
+    chains since chains run serially in a host loop."""
+    key = mx.random.key(6)
+    k_init, k_warm, k_nuts = mx.random.split(key, 3)
+    q0 = mx.random.normal(shape=(8, 2), key=k_init) * 5.0
+    q_last, eps, Minv = nuts_warmup_serial(gaussian_logp, q0, n_warmup=400, key=k_warm)
+    result = run_nuts_serial(gaussian_logp, q_last, n_samples=900, eps=eps, Minv_np=Minv, key=k_nuts)
+    check_gaussian(result)
+    assert result.n_divergent == 0, f"unexpected divergences on the Gaussian: {result.n_divergent}"
+    cov_rel = np.linalg.norm(np.cov(result.flat.T) - GAUSSIAN_SIGMA) / np.linalg.norm(GAUSSIAN_SIGMA)
+    assert cov_rel < 0.05, f"serial NUTS cov Frobenius rel err {cov_rel:.3f}"
+
+
+def test_nuts_serial_fixed_metric():
+    """estimate_metric=False holds a known-good metric (Sigma) fixed and tunes only eps --
+    the mode the bayes-compsep Laplace-preconditioned subspace uses."""
+    key = mx.random.key(7)
+    k_init, k_warm, k_nuts = mx.random.split(key, 3)
+    q0 = mx.random.normal(shape=(8, 2), key=k_init) * 5.0
+    q_last, eps, Minv = nuts_warmup_serial(
+        gaussian_logp, q0, n_warmup=300, key=k_warm, minv0=GAUSSIAN_SIGMA, estimate_metric=False)
+    assert np.allclose(Minv, GAUSSIAN_SIGMA), "fixed metric should be returned unchanged"
+    result = run_nuts_serial(gaussian_logp, q_last, n_samples=900, eps=eps, Minv_np=Minv, key=k_nuts)
+    check_gaussian(result)
